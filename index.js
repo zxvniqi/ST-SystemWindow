@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.3 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.4 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.3";
+var VERSION = "1.4.4";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -792,7 +792,7 @@ function buildPrompt(c) {
   if (!any) return '';
   var rank = c.status.grow === 'rank';
   var usesGrade = (c.status.on && (f.stat || (rank && f.lv))) || c.profile.on || c.quest.on;
-  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Show System windows as tagged blocks, using only the formats given, each placed at the point in the story where it happens. ' +
+  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Show System windows as tagged blocks, using only the formats given, each placed at the point in the story where it happens unless a window says otherwise. ' +
     'One "key: value" per line; drop lines that don\'t apply (never write "none" or "-"). Lists: ";" between items, "|" between fields. Keep keys in English; write values in ' + W.lang + '.';
   if (usesGrade) rules += '\nGrades: F feeble < E < D < C average adult < B < A elite human < S superhuman < SS legendary; +/- allowed.';
   rules += '\nCarry numbers, items and effects over from the latest block; change only what the story changed.';
