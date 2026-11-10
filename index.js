@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.4 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.5 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.4";
+var VERSION = "1.4.5";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -792,17 +792,12 @@ function buildPrompt(c) {
   if (!any) return '';
   var rank = c.status.grow === 'rank';
   var usesGrade = (c.status.on && (f.stat || (rank && f.lv))) || c.profile.on || c.quest.on;
-  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Show System windows as tagged blocks, using only the formats given, each placed at the point in the story where it happens unless a window says otherwise. ' +
+  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Show System windows as tagged blocks, using only the formats given, each placed at the point in the story where it happens. ' +
     'One "key: value" per line; drop lines that don\'t apply (never write "none" or "-"). Lists: ";" between items, "|" between fields. Keep keys in English; write values in ' + W.lang + '.';
   if (usesGrade) rules += '\nGrades: F feeble < E < D < C average adult < B < A elite human < S superhuman < SS legendary; +/- allowed.';
   rules += '\nCarry numbers, items and effects over from the latest block; change only what the story changed.';
-  /* restraint: the prose tells the story, windows are seasoning */
-  var caps = [];
-  if (c.system.on) caps.push('2 <system>');
-  if (c.noti.on) caps.push('1 <noti>');
-  if (c.quest.on) caps.push('1 <quest>');
-  if (c.profile.on) caps.push('1 <profile>');
-  if (caps.length) rules += '\nUse windows sparingly; the prose carries the story. Per reply at most ' + caps.join(', ') + ', and only for something that matters. ' + (c.status.on ? 'Many replies need nothing beyond the status block.' : 'Many replies need no window at all.');
+  /* restraint without numbers: windows appear only where the story naturally calls for them */
+  rules += '\nShow a window only when the moment naturally calls for it; the prose carries the story. ' + (c.status.on ? 'Many replies need nothing beyond the status block.' : 'Many replies need no window at all.');
   var per = c.persona === 'custom' ? trimS(c.personaCustom) : (PERSONA[c.persona] || PERSONA.neutral)[2];
   if (per) rules += '\nSystem personality: ' + per + '.';
   out.push(rules);
@@ -833,7 +828,7 @@ function buildPrompt(c) {
     if (c.system.on) sm += '[System Messages]\nOnly when the System truly speaks up (answering {{user}}, a real warning, a major event), not for every small reaction:\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line\n</system>\n' +
       'text alone is fine; add sub only when there is more to say. talk = answering {{user}}; warn = danger or deadline; error = malfunction or forbidden truth (hide words with ███, optional "log: action|OK or FAIL" lines); levelup text = ' +
       (c.status.grow === 'rank' ? '"RANK a → b"' : '"LV.a → LV.b"') + '.';
-    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Notable gains or changes go in a single block at the end of the reply' + (c.system.on ? ' instead' : '') + ', a line each; skip trivial ones:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
+    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Notable gains or changes go in a block' + (c.system.on ? ' instead' : '') + ', a line each; skip trivial ones:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
     out.push(sm);
   }
   if (c.quest.on) out.push('[Quest Window]\nOnly when the System issues a quest at a real turning point:\n<quest>\ntype: ' + W.qtype + '\ntitle: quest name\ndesc: situation, 1-2 sentences\ntime: HH:MM:SS left|% of time left\n' +
