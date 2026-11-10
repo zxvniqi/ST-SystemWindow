@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.2.0 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.2.1 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.2.0";
+var VERSION = "1.2.1";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -327,7 +327,7 @@ HB.R.status = function (d) {
     body += '<div class="lbl">' + panes[0][1] + '</div>' + panes[0][3];
   }
 
-  var hd = '<div class="hd">' + H.ic('status') + '<span class="hd-t"><b>' + T('status') + '</b><small>Status</small></span>' + (d._mid ? '<span class="upd">' + T('upd') + '</span>' : '') + '<span class="hd-r">' + who + '</span></div>';
+  var hd = '<div class="hd">' + H.ic('status') + '<span class="hd-t"><b>' + T('status') + '</b><small>Status</small></span>' + '<span class="hd-r">' + who + '</span></div>';
   var br = brief ? '<div class="brief">' + brief + '</div>' : '';
   var count = panes.map(function (p) { return p[1]; }).join(' · ');
   /* the toggle stays where it is; the details open below it, so the same spot closes them again */
@@ -808,7 +808,8 @@ function buildPrompt(c) {
     var lines = Object.keys(L).filter(function (k) { return f[k]; }).map(function (k) { return L[k]; });
     if (lines.length) {
       var s = '[Status Window]\nBegin every reply with this full block, before any narrative or other block:\n<status>\n' + lines.join('\n') + '\n</status>';
-      var notes = ['One <status> per reply.'];
+      var mid = ['date', 'time', 'loc', 'weather'].filter(function (k) { return f[k]; });
+      var notes = mid.length ? ['Only for a time skip of an hour or more, or a move to another place, partway through the reply: add one more <status> right there with only the ' + mid.join('/') + ' lines that changed. At most one per reply.'] : ['One <status> per reply.'];
       if (f.stat) notes.push('n = value, G = grade.');
       if (f.quest) notes.push('No active quest = no quest line.');
       if (f.inv) notes.push('inv lists items carried or wielded, never clothing. Rarity: ' + W.rar + '.');
