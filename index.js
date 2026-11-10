@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.2.1 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.2.2 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.2.1";
+var VERSION = "1.2.2";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -233,7 +233,7 @@ HB.tabs = function (root) {
 /* ---------- renderers: each takes parsed lines and returns HTML; missing lines are simply not drawn ---------- */
 HB.R.status = function (d) {
   /* "없음 / none / なし / -" means the line should not be there at all */
-  var H = HB, one = function (k) { var v = H.one(d, k); return H.isNone(v) ? '' : v; }, chg = d._chg || {}, cc = function (k) { return chg[k] ? ' chg' : ''; };
+  var H = HB, one = function (k) { var v = H.one(d, k); return H.isNone(v) ? '' : v; }, cc = function () { return ''; }; /* changed lines are no longer highlighted */
   var name = one('name'), lv = one('lv').replace(/^\s*(lv\.?|레벨)\s*/i, '');
   /* level or rank: whichever the settings asked for */
   var rk = one('rank').replace(/^\s*(rank|랭크|ランク)\s*/i, ''), rg = H.grade(rk);
