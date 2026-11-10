@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.1 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.2 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.1";
+var VERSION = "1.4.2";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -857,10 +857,8 @@ var TAGS = KINDS.join('|');
 function wantedRegex() {
   var base = { trimStrings: [], placement: [2], disabled: false, runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
   function mk(o) { var r = clone(base); Object.keys(o).forEach(function (k) { r[k] = o[k]; }); return r; }
-  /* order matters: the old-window hider must run before the display regex turns the tags into code blocks */
+  /* old windows are folded by hideOld() now, so no regex throws their content away */
   return [
-    mk({ id: 'hb-sw-cleanup', scriptName: '시스템 상태창 · 지난 상태창 숨김 (자동 관리)', markdownOnly: true, promptOnly: false, minDepth: 3,
-      disabled: !CF.adv.cleanup, findRegex: '/(?:```[a-z]*[ \\t]*\\n)?[ \\t]*<(status|noti)>[\\s\\S]*?<\\/\\1>(?:[ \\t]*\\n```)?/gi', replaceString: '\n```\n[HB:hidden]\n```\n' }),
     mk({ id: 'hb-sw-display', scriptName: '시스템 상태창 · 표시 (자동 관리)', markdownOnly: true, promptOnly: false,
       findRegex: '/(?:```[a-z]*[ \\t]*\\n)?[ \\t]*<(' + TAGS + ')>([\\s\\S]*?)<\\/\\1>(?:[ \\t]*\\n```)?/gi', replaceString: '\n```\n[HB:$1]\n$2\n```\n' }),
     mk({ id: 'hb-sw-pending', scriptName: '시스템 상태창 · 수신 중 (자동 관리)', markdownOnly: true, promptOnly: false,
@@ -869,6 +867,8 @@ function wantedRegex() {
 }
 function ensureRegex(force) {
   var es = ctx.extensionSettings, list = es.regex = es.regex || [], changed = false, display = false;
+  /* retired: the old-window regex (it replaced old windows with nothing) */
+  for (var r = list.length - 1; r >= 0; r--) if (list[r] && list[r].id === 'hb-sw-cleanup') { list.splice(r, 1); changed = true; display = true; }
   var wanted = wantedRegex();
   wanted.forEach(function (w) {
     var i = -1; list.forEach(function (x, n) { if (x && x.id === w.id) i = n; });
@@ -1038,18 +1038,32 @@ function statusPres(mt, pre) {
 /* the cleanup regex only applies when a message is drawn, so messages that age past depth 3 while the chat is open
    keep their windows until a reload: hide old status / noti windows here as well */
 var HIDE_DEPTH = 3, depthT = 0;
+/* old status / noti windows fold behind one small bar per message; tapping it opens them again */
 function hideOld() {
   clearTimeout(depthT);
   depthT = setTimeout(function () {
     var c = C(), n = c && c.chat ? c.chat.length : 0, on = !!(CF && CF.adv && CF.adv.cleanup);
     D.querySelectorAll('#chat .mes').forEach(function (m) {
       var id = parseInt(m.getAttribute('mesid'), 10), old = on && !isNaN(id) && n - 1 - id >= HIDE_DEPTH;
-      m.querySelectorAll('.hb-host[data-hb="status"], .hb-host[data-hb="noti"]').forEach(function (h) { h.style.display = old ? 'none' : ''; });
+      var hosts = [].slice.call(m.querySelectorAll('.hb-host[data-hb="status"], .hb-host[data-hb="noti"]'));
+      m.querySelectorAll('.hb-oldbar').forEach(function (b) { b.remove(); });
+      if (!old || !hosts.length) { hosts.forEach(function (h) { h.style.display = ''; }); return; }
+      var open = m.getAttribute('data-hb-open') === '1';
+      hosts.forEach(function (h) { h.style.display = open ? '' : 'none'; });
+      var ns = hosts.filter(function (h) { return h.getAttribute('data-hb') === 'status'; }).length, nn = hosts.length - ns;
+      var label = [ns ? '지난 상태창' + (ns > 1 ? ' ' + ns : '') : '', nn ? '알림 ' + nn : ''].filter(Boolean).join(' · ');
+      var bar = D.createElement('div'); bar.className = 'hb-oldbar' + (open ? ' open' : ''); bar.setAttribute('role', 'button'); bar.tabIndex = 0;
+      bar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span>' + label + '</span>';
+      function flip() { m.setAttribute('data-hb-open', open ? '0' : '1'); hideOld(); }
+      bar.addEventListener('click', flip);
+      bar.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+      hosts[0].parentNode.insertBefore(bar, hosts[0]);
     });
   }, 60);
 }
 function scanAll(root) { (root || D).querySelectorAll('#chat .mes_text pre').forEach(process); }
 function unrender(sel) {
+  if (!sel) D.querySelectorAll('#chat .hb-oldbar').forEach(function (b) { b.remove(); });
   D.querySelectorAll(sel || '#chat .hb-host').forEach(function (h) {
     var id = h.getAttribute('data-hb-id'), pre = id ? D.querySelector('pre[data-hb-id="' + id + '"]') : null;
     if (pre) { pre.removeAttribute('data-hb-done'); pre.removeAttribute('data-hb-id'); pre.style.display = ''; showRunnerBtn(pre); }
@@ -1197,7 +1211,11 @@ var UI_CSS = [
 '.hb-host{display:block}',
 '.TH-render:has(> pre[data-hb-done]) > .TH-collapse-code-block-button{display:none!important}',
 '.TH-render:has(> pre[data-hb-done]):not(:has(> .hb-host)){display:none!important}',
-'.TH-render:has(> .hb-host){display:block!important}'
+'.TH-render:has(> .hb-host){display:block!important}',
+'#chat .hb-oldbar{display:flex;align-items:center;gap:6px;width:fit-content;margin:6px 0;padding:4px 12px 4px 8px;font:500 12px/1.4 "IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;color:#8fe9ff;background:rgba(6,20,36,.88);border:1px solid rgba(120,214,255,.35)!important;border-radius:2px;cursor:pointer;user-select:none;text-shadow:none;box-shadow:0 2px 6px rgba(0,0,0,.15)}',
+'#chat .hb-oldbar:hover{border-color:rgba(120,214,255,.7)!important}',
+'#chat .hb-oldbar svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;transition:transform .2s}',
+'#chat .hb-oldbar.open svg{transform:rotate(90deg)}'
 ].join('\n');
 
 var FIELD_GROUPS = [
@@ -1368,7 +1386,7 @@ var PANELS = {
     var text = buildPrompt(c);
     return '<div class="hbs-sec"><h3>지침 넣는 위치</h3><div class="hbs-line" style="align-items:flex-start;gap:16px"><div class="hbs-f"><label for="hbs-depth">깊이 (0 = 맨 끝)</label><input id="hbs-depth" type="number" min="0" max="20" class="hbs-in hbs-num" data-k="adv.depth" value="' + (c.adv.depth | 0) + '"></div>' +
       '<div class="hbs-f"><span class="l">역할</span><div class="hbs-chips">' + chip('adv.role', 0, 'System') + chip('adv.role', 1, 'User') + chip('adv.role', 2, 'Assistant') + '</div></div></div></div>' +
-      '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 상태창 숨기기', '최근 3개 응답에만 상태창과 알림을 보여 줍니다. AI에게는 그대로 보냅니다.') + '</div></div>' +
+      '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 상태창 접어 두기', '최근 3개 응답 밖의 상태창과 알림을 접어 둡니다. 눌러서 펼칠 수 있고, AI에게는 그대로 보냅니다.') + '</div></div>' +
       '<div class="hbs-sec"><h3>AI에게 보내는 지침 <small>지금 설정으로 만든 내용</small><span class="hbs-cnt">' + text.length + '자 · 약 ' + Math.round(text.length / 3.6) + ' 토큰</span></h3>' +
       (LINK.active ? '' : '<div class="hbs-note">이 채팅은 연결되어 있지 않아 지금은 이 지침을 보내지 않습니다.</div>') +
       '<textarea class="hbs-ta mono" readonly id="hbs-prompt">' + h(text) + '</textarea>' +
