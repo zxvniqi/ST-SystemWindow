@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.2.2 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.2.3 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.2.2";
+var VERSION = "1.2.3";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -1370,7 +1370,21 @@ var THEME_GUIDE = '<div class="hbs-guide">' +
   '<li>창은 섀도 DOM 안에 그려집니다. 변수는 <code>:root</code>가 아니라 <code>:host</code>에 적습니다.</li>' +
   '<li>좁은 화면 대응은 <code>@media</code> 대신 <code>@container hb (max-width:540px)</code>를 씁니다.</li>' +
   '<li>창 종류별 바깥 클래스: 상태창 <code>.st</code>, 시스템 <code>.sys .talk .warn .err .lvup</code>, 알림 <code>.toast .t</code>, 인물 <code>.ch-top .slist</code>, 상점 <code>.item</code></li>' +
-  '<li>견본 테마 <b>Amber Terminal</b>이 색만 바꾼 예입니다.</li></ul></div>';
+  '<li>견본 테마 <b>Amber Terminal</b>이 색만 바꾼 예입니다.</li></ul>' +
+  '<h4>5. AI에게 맡길 때</h4><p>견본 zip의 theme.css를 첨부하고 아래 글을 붙여 넣은 뒤, 마지막 줄에 원하는 디자인을 적습니다.</p>' +
+  '<pre class="hbs-copy">첨부한 theme.css는 SillyTavern "시스템 상태창" 확장의 창 디자인이다. 이걸 고쳐서 새 테마를 만들어 줘.\n\n' +
+  '규칙:\n' +
+  '- 결과물은 theme.json과 theme.css 두 파일. zip에 바로 넣을 수 있게 각각 전체 내용을 줘.\n' +
+  '- theme.json: {"id":"영문소문자-숫자-하이픈","name":"","author":"","version":"1.0","description":"","fonts":[]}\n' +
+  '- 창은 섀도 DOM 안에 그려진다. CSS 변수는 :host에 선언하고, :root·body·html 선택자는 쓰지 마.\n' +
+  '- 좁은 화면은 @media 대신 @container hb (max-width:540px) 로 처리해.\n' +
+  '- HTML 구조와 클래스 이름은 바꿀 수 없다. 첨부한 CSS에 나온 클래스만 꾸며.\n' +
+  '- 웹폰트는 @import 대신 theme.json의 fonts에 https CSS 주소로 넣어.\n' +
+  '- 글자가 배경에 묻히지 않게 대비를 충분히 주고, 폰 화면(폭 360px)에서도 깨지지 않게 해.\n' +
+  '- 애니메이션은 지금 있는 것만 고치고, 정보를 가리거나 깜빡여서 읽기 힘들게 하지 마.\n\n' +
+  '원하는 디자인: (여기에 적기. 예: 낡은 양피지 느낌, 갈색 잉크, 세리프 폰트)</pre>' +
+  '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="copy-guide">프롬프트 복사</button></div>' +
+  '<p>색만 바꾸고 싶으면 "theme.json에 "extends": "holo-blue"를 넣고, theme.css에는 :host 변수만 적어 줘"라고 덧붙이면 결과가 짧고 안전합니다.</p></div>';
 var TABS = [['main', '설정'], ['design', '디자인'], ['advanced', '고급']];
 
 function linkBar() {
@@ -1453,6 +1467,12 @@ var ACTIONS = {
   'ps-exp': function () { download('system-window-presets.json', new Blob([JSON.stringify({ hb_system_window: 2, presets: S.presets, current: CF }, null, 2)], { type: 'application/json' })); },
   'ps-imp': function () { var f = ui.el.querySelector('#hbs-jfile'); f.value = ''; f.click(); },
   'unlink-char': function () { unlinkChar(); commit(true); },
+  'copy-guide': function (b) {
+    var pre = ui.el.querySelector('.hbs-copy'), t = pre ? pre.textContent : '';
+    (P.navigator.clipboard ? P.navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = '복사됨'; }, function () {
+      var r = D.createRange(); r.selectNodeContents(pre); var s = P.getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = '선택됨 · 길게 눌러 복사';
+    });
+  },
   'copy-prompt': function (b) {
     var ta = ui.el.querySelector('#hbs-prompt');
     (P.navigator.clipboard ? P.navigator.clipboard.writeText(ta.value) : Promise.reject()).then(function () { b.textContent = '복사됨'; }, function () { ta.focus(); ta.select(); });
