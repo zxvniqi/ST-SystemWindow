@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.2 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.3 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.2";
+var VERSION = "1.4.3";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -796,6 +796,13 @@ function buildPrompt(c) {
     'One "key: value" per line; drop lines that don\'t apply (never write "none" or "-"). Lists: ";" between items, "|" between fields. Keep keys in English; write values in ' + W.lang + '.';
   if (usesGrade) rules += '\nGrades: F feeble < E < D < C average adult < B < A elite human < S superhuman < SS legendary; +/- allowed.';
   rules += '\nCarry numbers, items and effects over from the latest block; change only what the story changed.';
+  /* restraint: the prose tells the story, windows are seasoning */
+  var caps = [];
+  if (c.system.on) caps.push('2 <system>');
+  if (c.noti.on) caps.push('1 <noti>');
+  if (c.quest.on) caps.push('1 <quest>');
+  if (c.profile.on) caps.push('1 <profile>');
+  if (caps.length) rules += '\nUse windows sparingly; the prose carries the story. Per reply at most ' + caps.join(', ') + ', and only for something that matters. ' + (c.status.on ? 'Many replies need nothing beyond the status block.' : 'Many replies need no window at all.');
   var per = c.persona === 'custom' ? trimS(c.personaCustom) : (PERSONA[c.persona] || PERSONA.neutral)[2];
   if (per) rules += '\nSystem personality: ' + per + '.';
   out.push(rules);
@@ -823,18 +830,18 @@ function buildPrompt(c) {
   }
   if (c.system.on || c.noti.on) {
     var sm = '';
-    if (c.system.on) sm += '[System Messages]\nWhen the System speaks, warns or reacts, add one block per message:\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line\n</system>\n' +
+    if (c.system.on) sm += '[System Messages]\nOnly when the System truly speaks up (answering {{user}}, a real warning, a major event), not for every small reaction:\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line\n</system>\n' +
       'text alone is fine; add sub only when there is more to say. talk = answering {{user}}; warn = danger or deadline; error = malfunction or forbidden truth (hide words with ███, optional "log: action|OK or FAIL" lines); levelup text = ' +
       (c.status.grow === 'rank' ? '"RANK a → b"' : '"LV.a → LV.b"') + '.';
-    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Small gains or changes go in one block' + (c.system.on ? ' instead' : '') + ', a line each:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
+    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Notable gains or changes go in a single block at the end of the reply' + (c.system.on ? ' instead' : '') + ', a line each; skip trivial ones:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
     out.push(sm);
   }
-  if (c.quest.on) out.push('[Quest Window]\nOnly when the System issues a quest:\n<quest>\ntype: ' + W.qtype + '\ntitle: quest name\ndesc: situation, 1-2 sentences\ntime: HH:MM:SS left|% of time left\n' +
+  if (c.quest.on) out.push('[Quest Window]\nOnly when the System issues a quest at a real turning point:\n<quest>\ntype: ' + W.qtype + '\ntitle: quest name\ndesc: situation, 1-2 sentences\ntime: HH:MM:SS left|% of time left\n' +
     'goal: objective cur/max; ...\nreward: ...; ...\npenalty: ...; ...\n</quest>\nGoals are things still to be done when the quest is issued: each starts at 0. For progress, repeat the block with "state: active". When it ends: <quest> with state: clear or fail, grade, title, and only the reward (clear) or penalty (fail) actually applied.');
   if (c.profile.on) {
     var ps = names(c.profile.stats).map(function (n) { return n + ' G'; });
     if (c.profile.uniq) ps.push('*unique G');
-    var p = '[Profile Window]\nWhen {{user}} first meets, studies or scans a notable person:\n<profile>\nname: name\nrank: overall grade\n' +
+    var p = '[Profile Window]\nOnce per person, when {{user}} first meets, studies or scans a notable person (again only if much more is revealed):\n<profile>\nname: name\nrank: overall grade\n' +
       'info: age · job · affiliation\ntag: trait; trait (prefix ! for a warning sign)' + (ps.length ? '\nstat: ' + ps.join('; ') : '') +
       (c.profile.aff ? '\naff: affection 0-100|their feeling toward {{user}} in one word' : '') + (c.profile.mind ? '\nmind: their current inner thought, one sentence' : '') + '\n</profile>\n' +
       (c.profile.uniq ? 'Add 1-2 stats unique to the person, name prefixed with *. ' : '') + 'Write ? for anything {{user}} cannot know yet.' +
