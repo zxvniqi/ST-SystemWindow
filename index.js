@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.5 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.6 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.5";
+var VERSION = "1.4.6";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -1003,6 +1003,8 @@ function process(pre) {
   if (kind === 'hidden') { pre.setAttribute('data-hb-done', '1'); pre.style.display = 'none'; hideRunnerBtn(pre); return; }
   if (!pending && KINDS.indexOf(kind) < 0) return;
   var mes = pre.closest('.mes'), id = mes ? mes.getAttribute('mesid') : '', key = id + '|' + kind + '|' + raw;
+  /* old replies are not drawn at all (long chats would lag): the block stays a folded code block */
+  if (!pending && isOld(mes)) { markOld(pre); hideOld(); return; }
   /* each window plays its entrance once, the first time it is on screen */
   var quiet = seen.has(key);
   if (seen.size > 800) seen.clear();
@@ -1019,7 +1021,6 @@ function process(pre) {
   pre.setAttribute('data-hb-done', '1'); pre.style.display = 'none'; hideRunnerBtn(pre);
   /* the first status window of a message sits at the very top; later ones (time skips) stay where they were written */
   var top = (kind === 'status' && order === 0) || (pending && pendKind === 'status' && !mt.querySelector('.hb-host[data-hb="status"]'));
-  if (kind === 'status' || kind === 'noti') hideOld();
   if (top && mt) mt.insertBefore(host, mt.firstChild);
   else {
     /* never inside the runner's div.TH-render: it is inline-block, so a window inside it shrinks to zero width */
@@ -1037,29 +1038,55 @@ function statusPres(mt, pre) {
   }
   return out;
 }
-/* the cleanup regex only applies when a message is drawn, so messages that age past depth 3 while the chat is open
-   keep their windows until a reload: hide old status / noti windows here as well */
+/* replies older than the last three are not drawn as windows (a long chat would lag): every block in them stays
+   a raw code block, folded behind one bar per message; tapping the bar shows the code */
 var HIDE_DEPTH = 3, depthT = 0;
-/* old status / noti windows fold behind one small bar per message; tapping it opens them again */
+function isOld(m) {
+  if (!m || !(CF && CF.adv && CF.adv.cleanup)) return false;
+  var c = C(), n = c && c.chat ? c.chat.length : 0, id = parseInt(m.getAttribute('mesid'), 10);
+  return !isNaN(id) && n - 1 - id >= HIDE_DEPTH;
+}
+function markOld(pre) {
+  pre.setAttribute('data-hb-done', '1'); pre.setAttribute('data-hb-old', '1'); pre.removeAttribute('data-hb-id');
+  pre.style.setProperty('display', 'none', 'important'); hideRunnerBtn(pre);
+}
+function wrapOf(pre) { var p = pre.parentElement; return p && p.classList.contains('TH-render') ? p : null; }
 function hideOld() {
   clearTimeout(depthT);
   depthT = setTimeout(function () {
-    var c = C(), n = c && c.chat ? c.chat.length : 0, on = !!(CF && CF.adv && CF.adv.cleanup);
     D.querySelectorAll('#chat .mes').forEach(function (m) {
-      var id = parseInt(m.getAttribute('mesid'), 10), old = on && !isNaN(id) && n - 1 - id >= HIDE_DEPTH;
-      var hosts = [].slice.call(m.querySelectorAll('.hb-host[data-hb="status"], .hb-host[data-hb="noti"]'));
-      m.querySelectorAll('.hb-oldbar').forEach(function (b) { b.remove(); });
-      if (!old || !hosts.length) { hosts.forEach(function (h) { h.style.display = ''; }); return; }
+      var bar = m.querySelector('.hb-oldbar');
+      if (!isOld(m)) {
+        /* young again (a message was deleted): draw its windows */
+        if (bar) bar.remove();
+        m.querySelectorAll('pre[data-hb-old]').forEach(function (p) {
+          p.removeAttribute('data-hb-old'); p.removeAttribute('data-hb-done'); p.style.removeProperty('display'); showRunnerBtn(p); process(p);
+        });
+        return;
+      }
+      /* just aged past the limit: take its drawn windows away */
+      m.querySelectorAll('.hb-host:not([data-hb-pending])').forEach(function (h) {
+        var id = h.getAttribute('data-hb-id'), p = id ? m.querySelector('pre[data-hb-id="' + id + '"]') : null;
+        h.remove(); if (p) markOld(p);
+      });
+      var pres = [].slice.call(m.querySelectorAll('pre[data-hb-old]'));
+      if (!pres.length) { if (bar) bar.remove(); return; }
       var open = m.getAttribute('data-hb-open') === '1';
-      hosts.forEach(function (h) { h.style.display = open ? '' : 'none'; });
-      var ns = hosts.filter(function (h) { return h.getAttribute('data-hb') === 'status'; }).length, nn = hosts.length - ns;
-      var label = [ns ? '지난 상태창' + (ns > 1 ? ' ' + ns : '') : '', nn ? '알림 ' + nn : ''].filter(Boolean).join(' · ');
-      var bar = D.createElement('div'); bar.className = 'hb-oldbar' + (open ? ' open' : ''); bar.setAttribute('role', 'button'); bar.tabIndex = 0;
-      bar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span>' + label + '</span>';
-      function flip() { m.setAttribute('data-hb-open', open ? '0' : '1'); hideOld(); }
-      bar.addEventListener('click', flip);
-      bar.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
-      hosts[0].parentNode.insertBefore(bar, hosts[0]);
+      pres.forEach(function (p) {
+        p.style.setProperty('display', open ? 'block' : 'none', 'important');
+        var w = wrapOf(p); if (w) w.style.setProperty('display', open ? 'block' : 'none', 'important');
+      });
+      if (!bar) {
+        bar = D.createElement('div'); bar.className = 'hb-oldbar'; bar.setAttribute('role', 'button'); bar.tabIndex = 0;
+        bar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span></span>';
+        var flip = function () { m.setAttribute('data-hb-open', m.getAttribute('data-hb-open') === '1' ? '0' : '1'); hideOld(); };
+        bar.addEventListener('click', flip);
+        bar.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+        var first = wrapOf(pres[0]) || pres[0], mt = m.querySelector('.mes_text');
+        if (mt) mt.insertBefore(bar, mt.firstChild); else first.parentNode.insertBefore(bar, first);
+      }
+      bar.classList.toggle('open', open);
+      bar.querySelector('span').textContent = '시스템 창 ' + pres.length + '개 · ' + (open ? '코드 접기' : '코드 보기');
     });
   }, 60);
 }
@@ -1388,7 +1415,7 @@ var PANELS = {
     var text = buildPrompt(c);
     return '<div class="hbs-sec"><h3>지침 넣는 위치</h3><div class="hbs-line" style="align-items:flex-start;gap:16px"><div class="hbs-f"><label for="hbs-depth">깊이 (0 = 맨 끝)</label><input id="hbs-depth" type="number" min="0" max="20" class="hbs-in hbs-num" data-k="adv.depth" value="' + (c.adv.depth | 0) + '"></div>' +
       '<div class="hbs-f"><span class="l">역할</span><div class="hbs-chips">' + chip('adv.role', 0, 'System') + chip('adv.role', 1, 'User') + chip('adv.role', 2, 'Assistant') + '</div></div></div></div>' +
-      '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 상태창 접어 두기', '최근 3개 응답 밖의 상태창과 알림을 접어 둡니다. 눌러서 펼칠 수 있고, AI에게는 그대로 보냅니다.') + '</div></div>' +
+      '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 응답의 창 접어 두기', '최근 3개 응답보다 오래된 창은 그리지 않고 코드로 접어 둡니다. 긴 채팅이 가벼워지고, AI에게는 그대로 보냅니다.') + '</div></div>' +
       '<div class="hbs-sec"><h3>AI에게 보내는 지침 <small>지금 설정으로 만든 내용</small><span class="hbs-cnt">' + text.length + '자 · 약 ' + Math.round(text.length / 3.6) + ' 토큰</span></h3>' +
       (LINK.active ? '' : '<div class="hbs-note">이 채팅은 연결되어 있지 않아 지금은 이 지침을 보내지 않습니다.</div>') +
       '<textarea class="hbs-ta mono" readonly id="hbs-prompt">' + h(text) + '</textarea>' +
