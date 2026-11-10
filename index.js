@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.4.0 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.4.1 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.4.0";
+var VERSION = "1.4.1";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -953,7 +953,8 @@ function makeHost(kind, raw, opt) {
   catch (e) { box.textContent = '[시스템 상태창] 표시 오류: ' + e.message; }
   sh.appendChild(box);
   function bind() {
-    if (HB.B[kind]) { try { HB.B[kind](box, !!opt.quiet); } catch (e) { console.warn('[HB]', e); } }
+    /* settings previews are for looking only: their quest buttons must not reach the real input box */
+    if (HB.B[kind] && !(opt.preview && kind === 'quest')) { try { HB.B[kind](box, !!opt.quiet); } catch (e) { console.warn('[HB]', e); } }
     try { HB.marquee(box); } catch (e) { console.warn('[HB]', e); }
   }
   if (opt.wait && io) { host._play = function () { box.classList.remove('wait'); bind(); if (opt.onPlay) opt.onPlay(); }; io.observe(host); }
@@ -1016,6 +1017,7 @@ function process(pre) {
   pre.setAttribute('data-hb-done', '1'); pre.style.display = 'none'; hideRunnerBtn(pre);
   /* the first status window of a message sits at the very top; later ones (time skips) stay where they were written */
   var top = (kind === 'status' && order === 0) || (pending && pendKind === 'status' && !mt.querySelector('.hb-host[data-hb="status"]'));
+  if (kind === 'status' || kind === 'noti') hideOld();
   if (top && mt) mt.insertBefore(host, mt.firstChild);
   else {
     /* never inside the runner's div.TH-render: it is inline-block, so a window inside it shrinks to zero width */
@@ -1032,6 +1034,19 @@ function statusPres(mt, pre) {
     if (m) out.push({ pre: all[i], raw: t.slice(m[0].length) });
   }
   return out;
+}
+/* the cleanup regex only applies when a message is drawn, so messages that age past depth 3 while the chat is open
+   keep their windows until a reload: hide old status / noti windows here as well */
+var HIDE_DEPTH = 3, depthT = 0;
+function hideOld() {
+  clearTimeout(depthT);
+  depthT = setTimeout(function () {
+    var c = C(), n = c && c.chat ? c.chat.length : 0, on = !!(CF && CF.adv && CF.adv.cleanup);
+    D.querySelectorAll('#chat .mes').forEach(function (m) {
+      var id = parseInt(m.getAttribute('mesid'), 10), old = on && !isNaN(id) && n - 1 - id >= HIDE_DEPTH;
+      m.querySelectorAll('.hb-host[data-hb="status"], .hb-host[data-hb="noti"]').forEach(function (h) { h.style.display = old ? 'none' : ''; });
+    });
+  }, 60);
 }
 function scanAll(root) { (root || D).querySelectorAll('#chat .mes_text pre').forEach(process); }
 function unrender(sel) {
@@ -1054,6 +1069,7 @@ function applyAll(opt) {
   ensureRegex();
   var sig = c.theme + '|' + HB.lang + '|' + c.quest.btn + '|' + (opt && opt.force ? Math.random() : '');
   if (sig !== lastSig) { lastSig = sig; applyTheme(); rerenderAll(); }
+  hideOld();
 }
 
 /* ---------- settings window (light, readable, separate from the window design) ---------- */
@@ -1413,11 +1429,11 @@ function drawPreviews(body, c) {
     if (k === 'system') { var st = ui.sysPrev || 'notice'; raw = SAMPLE.sys[st === 'levelup' && c.status.grow === 'rank' ? 'rankup' : st]; }
     el.innerHTML = '';
     if (k === 'status' && !raw) { el.innerHTML = '<div class="hbs-empty" style="background:#fff">표시할 항목을 하나 이상 고르세요.</div>'; return; }
-    el.appendChild(makeHost(k, raw, { quiet: true }));
+    el.appendChild(makeHost(k, raw, { quiet: true, preview: true }));
   });
   body.querySelectorAll('[data-pv]').forEach(function (el) {
     var t = getTheme(el.getAttribute('data-pv'));
-    el.appendChild(makeHost('system', SAMPLE.system, { quiet: true, css: themeCss(t) }));
+    el.appendChild(makeHost('system', SAMPLE.system, { quiet: true, preview: true, css: themeCss(t) }));
   });
 }
 function paint() {
@@ -1641,6 +1657,7 @@ function start() {
   on('GENERATION_STARTED', applyPrompt);
   function settle() { setTimeout(function () { unrender('#chat .hb-host[data-hb-pending]'); scanAll(); }, 150); }
   on('GENERATION_ENDED', settle); on('GENERATION_STOPPED', settle);
+  ['MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'CHARACTER_MESSAGE_RENDERED', 'USER_MESSAGE_RENDERED', 'MORE_MESSAGES_LOADED', 'CHAT_CHANGED'].forEach(function (ev) { on(ev, hideOld); });
   addWand(); wandTimer = setInterval(addWand, 3000);
 
   P.__HB_SYSTEM_WINDOW__ = handle = { ext: IS_EXT, destroy: destroy, open: openSettings, version: VERSION, buildPrompt: function () { resolve(); return buildPrompt(CF); } };
