@@ -919,9 +919,10 @@ function loadStore() {
   var s = es[KEY]; if (!s || typeof s !== 'object') s = es[KEY] = {};
   s.cfg = merge(DEF, s.cfg || {});
   /* this device's own choices, the same in every chat (paths starting with "@" in the settings window) */
-  var prev = s.ui && s.ui.prev;
+  var prev = s.ui && s.ui.prev, pos = s.ui && s.ui.bookPos;
   s.ui = merge({ book: 1, bookAt: 'wand' }, s.ui || {});
   s.ui.prev = prev && typeof prev === 'object' ? prev : {};   /* preview code the user edited, by window kind */
+  if (pos && typeof pos.r === 'number' && typeof pos.a === 'number') s.ui.bookPos = pos;   /* where the floating notebook was moved */
   s.presets = s.presets || {}; s.themes = s.themes || {};
   Object.keys(s.themes).forEach(function (id) { if (s.themes[id] && s.themes[id].pack) normPack(s.themes[id]); });
  s.chars = s.chars || {}; s.worlds = s.worlds || {};
@@ -2334,6 +2335,16 @@ function importTheme(file) {
 var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false, prevMode: {}, audit: null };
 var CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 function h(s) { return HB.esc(s); }
+/* level / rank switched while the status preview's code is edited: the edit follows the switch (other lines stay) */
+function growPrev(rank) {
+  var s = S.ui.prev && S.ui.prev.status;
+  if (s == null) return;
+  var lines = String(s).split('\n').filter(function (l) { return !/^\s*(lv|rank)\s*:/i.test(l); });
+  var at = 0; lines.forEach(function (l, i) { if (/^\s*(date|time|loc|weather|name)\s*:/i.test(l)) at = i + 1; });
+  lines.splice(at, 0, rank ? 'rank: C+' : 'lv: 12');
+  lines = lines.map(function (l) { return /^\s*exp\s*:/i.test(l) ? (rank ? 'exp: 62%' : 'exp: 1,240/2,000') : l; });
+  S.ui.prev.status = lines.join('\n'); save();
+}
 /* a pack edit: its windows are redrawn on the next apply */
 function packBump(path) { var p = curPack(); if (p && String(path).charAt(0) === '#') p.rev = (p.rev | 0) + 1; }
 /* "@name" = a device-wide choice kept in S.ui instead of the current chat's settings; "#name" = the current custom pack */
@@ -2772,19 +2783,24 @@ function openSettings() {
     var ac = e.target.closest('[data-acc]');
     if (ac) { var open = ac.getAttribute('aria-expanded') !== 'true'; ui.acc[ac.dataset.acc] = open; ac.setAttribute('aria-expanded', open); ac.nextElementSibling.hidden = !open; return; }
     var pv = e.target.closest('[data-prev]');
-    if (pv && e.target.closest('[data-pvmode]')) { ui.prevMode[pv.dataset.prev] = e.target.closest('[data-pvmode]').dataset.pvmode; drawPrev(pv, CF); return; }
-    if (pv && e.target.closest('[data-pvreset]')) { delete S.ui.prev[pv.dataset.prev]; save(); drawPrev(pv, CF); return; }
+    if (pv && e.target.closest('[data-pvmode]')) { ui.prevMode[pv.dataset.prev] = e.target.closest('[data-pvmode]').dataset.pvmode; drawPrev(pv, EF); return; }
+    if (pv && e.target.closest('[data-pvreset]')) { delete S.ui.prev[pv.dataset.prev]; save(); drawPrev(pv, EF); return; }
     var sp = e.target.closest('[data-sysprev]');
     if (sp) {
       ui.sysPrev = sp.dataset.sysprev; delete S.ui.prev.system; save();
       sp.parentNode.querySelectorAll('[data-sysprev]').forEach(function (x) { x.setAttribute('aria-pressed', x === sp ? 'true' : 'false'); });
-      var pv = body.querySelector('[data-prev="system"]'); if (pv) drawPreviews(pv.parentNode, CF);
+      var pv = body.querySelector('[data-prev="system"]'); if (pv) drawPreviews(pv.parentNode, EF);
       return;
     }
     var go = e.target.closest('[data-tabgo]');
     if (go) { ui.tab = go.dataset.tabgo; body.scrollTop = 0; paint(); return; }
     var set = e.target.closest('[data-set]');
-    if (set) { ui.anchor = '[data-set="' + set.dataset.set + '"][data-v="' + set.dataset.v + '"]'; var cur = getPath(CF, set.dataset.set), v = set.dataset.v; setPath(CF, set.dataset.set, typeof cur === 'number' ? +v : v); packBump(set.dataset.set); commit(true); return; }
+    if (set) {
+      ui.anchor = '[data-set="' + set.dataset.set + '"][data-v="' + set.dataset.v + '"]'; var cur = getPath(CF, set.dataset.set), v = set.dataset.v;
+      setPath(CF, set.dataset.set, typeof cur === 'number' ? +v : v); packBump(set.dataset.set);
+      if (/status\.grow$/.test(set.dataset.set)) growPrev(v === 'rank');
+      commit(true); return;
+    }
     var act = e.target.closest('[data-act]');
     if (act && ACTIONS[act.dataset.act]) ACTIONS[act.dataset.act](act);
   });
@@ -2837,7 +2853,7 @@ function openSettings() {
     var v = t.type === 'number' ? Math.max(0, Math.min(20, parseInt(t.value, 10) || 0)) : t.value;
     setPath(CF, t.dataset.k, v); commit(false);
     var wc = body.querySelector('#hbs-wc'); if (wc && t.dataset.k === 'world') wc.textContent = v.length + ' / 1200';
-    if (t.dataset.k === 'status.stats' || t.dataset.k === 'profile.stats') drawPreviews(body, CF);
+    if (t.dataset.k === 'status.stats' || t.dataset.k === 'profile.stats') drawPreviews(body, EF);
   });
   paint();
 }
@@ -2888,7 +2904,9 @@ UI_CSS += '\n' + [
 '#hbn-ov .hbn-at{align-self:flex-end;margin-top:-6px;font-size:11.5px;color:#6f8698}',
 /* the floating button sits above the input bar on the right, clear of the last message's swipe row; faint until touched */
 '#hb-book-float{position:absolute;right:12px;bottom:calc(100% + 64px);width:40px;height:40px;border-radius:50%;display:grid;place-items:center;box-sizing:border-box;background:rgba(10,21,33,.55);color:#cfe9ff!important;border:1px solid rgba(120,214,255,.35)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.6;cursor:pointer;z-index:30;font-size:16px;transition:opacity .15s}',
-'#hb-book-float:hover,#hb-book-float:focus-visible{opacity:1}'
+'#hb-book-float:hover,#hb-book-float:focus-visible{opacity:1}',
+'#hb-book-float{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}',
+'#hb-book-float.drag{opacity:1;transform:scale(1.12);box-shadow:0 6px 18px rgba(0,0,0,.35);transition:transform .12s}'
 ].join('\n');
 
 var book = { el: null, tab: 'npc', who: null };
@@ -3056,9 +3074,44 @@ function bookBtn(id, cls) {
   el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); HB.opt.openBook(); } });
   return el;
 }
+/* the floating button: a long press picks it up, then it follows the finger; where it is let go is remembered */
+function floatDrag(f) {
+  var pos = S.ui.bookPos, timer = 0, drag = false, moved = false, sx = 0, sy = 0;
+  if (pos) { f.style.right = pos.r + 'px'; f.style.bottom = 'calc(100% + ' + pos.a + 'px)'; }
+  f.addEventListener('pointerdown', function (e) {
+    if (e.button > 0) return;
+    sx = e.clientX; sy = e.clientY; moved = false; clearTimeout(timer);
+    var id = e.pointerId;
+    timer = setTimeout(function () {
+      drag = true; f.classList.add('drag');
+      try { f.setPointerCapture(id); } catch (x) {}
+      try { if (P.navigator.vibrate) P.navigator.vibrate(12); } catch (x) {}
+    }, 380);
+  });
+  f.addEventListener('pointermove', function (e) {
+    if (!drag) { if (Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy) > 8) clearTimeout(timer); return; }
+    e.preventDefault(); moved = true;
+    var box = f.parentNode.getBoundingClientRect(), w = f.offsetWidth, h = f.offsetHeight;
+    var r = Math.max(4, Math.min(box.width - w - 4, box.right - e.clientX - w / 2));
+    var a = Math.max(4, Math.min(box.top - 60, box.top - e.clientY - h / 2));   /* stays below the top bar */
+    f.style.right = r + 'px'; f.style.bottom = 'calc(100% + ' + a + 'px)';
+    f._pos = { r: Math.round(r), a: Math.round(a) };
+  });
+  function end() {
+    clearTimeout(timer);
+    if (!drag) return;
+    drag = false; f.classList.remove('drag');
+    if (f._pos) { S.ui.bookPos = f._pos; save(); }
+  }
+  f.addEventListener('pointerup', end); f.addEventListener('pointercancel', end);
+  /* the tap that ends a move does not open the notebook */
+  f.addEventListener('click', function (e) { if (moved) { e.stopImmediatePropagation(); e.preventDefault(); moved = false; } }, true);
+  f.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+}
 function placeBook() {
-  var at = S && S.ui && S.ui.book ? S.ui.bookAt : '';
-  if (!BOOK_SPOTS[at]) at = S && S.ui && S.ui.book ? 'wand' : '';
+  /* only in chats the status window is linked to */
+  var on = !!(S && S.ui && S.ui.book && LINK.active), at = on ? S.ui.bookAt : '';
+  if (!BOOK_SPOTS[at]) at = on ? 'wand' : '';
   Object.keys(BOOK_SPOTS).forEach(function (k) {
     var el = D.getElementById(BOOK_SPOTS[k]);
     if (el && (k !== at || el.getAttribute('data-inst') !== INSTANCE)) el.remove();
@@ -3073,7 +3126,7 @@ function placeBook() {
     if (left) left.insertBefore(bookBtn('hb-book-btn', 'fa-solid fa-book interactable'), wand && wand.parentNode === left ? wand.nextSibling : null);
   } else {
     var fs = D.getElementById('form_sheld');
-    if (fs) { var f = bookBtn('hb-book-float', ''); f.innerHTML = '<i class="fa-solid fa-book" aria-hidden="true"></i>'; fs.appendChild(f); }
+    if (fs) { var f = bookBtn('hb-book-float', ''); f.innerHTML = '<i class="fa-solid fa-book" aria-hidden="true"></i>'; fs.appendChild(f); floatDrag(f); }
   }
 }
 HB.opt.openBook = function () { try { openBook(); } catch (e) { console.error('[시스템 상태창] 수첩 오류', e); toast('수첩을 열지 못했습니다: ' + e.message, 'error'); } };
