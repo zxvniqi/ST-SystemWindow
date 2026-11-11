@@ -2203,7 +2203,10 @@ var UI_CSS = [
 /* custom pack settings */
 '#hbs-ov .hbs-fl{display:flex;flex-direction:column;gap:8px;align-items:flex-start}',
 '#hbs-ov .hbs-frow{align-self:stretch;display:grid;grid-template-columns:18px minmax(0,1fr) 84px 30px;gap:6px;align-items:center;padding:8px;border:1px solid var(--b);border-radius:8px;background:var(--bg2)}',
-'#hbs-ov .hbs-frow input[type=checkbox]{margin:0;width:16px;height:16px;accent-color:var(--ac)}',
+'#hbs-ov .hbs-ck.box{padding:0;border:0!important;background:none;gap:0}',
+'#hbs-ov .hbs-ck.box:has(input:checked){background:none}',
+/* the page theme strips the native arrow from selects: draw our own */
+'#hbs-ov .hbs-sel{-webkit-appearance:none;appearance:none;background:#fff url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%235b6776\' stroke-width=\'2.4\' stroke-linecap=\'round\' stroke-linejoin=\'round\'%3E%3Cpath d=\'M6 9l6 6 6-6\'/%3E%3C/svg%3E") right 8px center/12px no-repeat!important;padding-right:26px!important;cursor:pointer}',
 '#hbs-ov .hbs-frow .r2{grid-column:2 / 5;display:flex;gap:6px;min-width:0}',
 '#hbs-ov .hbs-frow .r2 .k{flex:0 0 108px;font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:12.5px}',
 '#hbs-ov .hbs-frow .r2 .hbs-in:not(.k){flex:1 1 auto;min-width:0}',
@@ -2385,7 +2388,7 @@ function fieldRows(path, list, kind) {
     /* an empty key is just not filled in yet (the field is skipped); only a wrong one is marked */
     var p = path + '.' + j, bad = !!f.k && (!KEY_RE.test(f.k) || own.indexOf(f.k) > -1 || !!seen[f.k]);
     if (f.k) seen[f.k] = 1; if (bad) anyBad = true;
-    return '<div class="hbs-frow' + (bad ? ' bad' : '') + '"><input type="checkbox" data-k="' + p + '.on"' + (f.on ? ' checked' : '') + ' aria-label="켜기">' +
+    return '<div class="hbs-frow' + (bad ? ' bad' : '') + '"><label class="hbs-ck box" title="켜기"><input type="checkbox" data-k="' + p + '.on"' + (f.on ? ' checked' : '') + ' aria-label="켜기"></label>' +
       '<input class="hbs-in sm" data-k="' + p + '.label" value="' + h(f.label) + '" placeholder="표시 이름" aria-label="표시 이름">' +
       '<select class="hbs-sel sm" data-k="' + p + '.type" aria-label="종류">' + FTYPES.map(function (x) { return '<option value="' + x[0] + '"' + (f.type === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
       '<button type="button" class="hbs-x2" data-act="pk-fdel" data-path="' + path + '" data-i="' + j + '" aria-label="항목 삭제">×</button>' +
