@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.5.2 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.5.3 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.5.2";
+var VERSION = "1.5.3";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -388,9 +388,16 @@ HB.S = (function () {
     var ks = ORDER.filter(function (k) { return k in st; }).concat(Object.keys(st).filter(function (k) { return ORDER.indexOf(k) < 0; }));
     return only ? ks.filter(function (k) { return only.indexOf(k) > -1; }) : ks;
   }
-  function line(st, k) { return k + ': ' + (Array.isArray(st[k]) ? (st[k].length ? st[k].join('; ') : 'none') : st[k]); }
+  /* short = for the AI's prompt: skill and title effects are left out (they are kept in the state all the same) */
+  var SHORT = { skill: 3, titles: 1 };
+  function line(st, k, short) {
+    var v = st[k];
+    if (!Array.isArray(v)) return k + ': ' + v;
+    if (short && SHORT[k]) v = v.map(function (it) { return HB.fields(it).slice(0, SHORT[k]).join('|'); });
+    return k + ': ' + (v.length ? v.join('; ') : 'none');
+  }
   /* the state as block text ("key: value" lines); only = keys to include */
-  function text(st, only) { return keysOf(st || {}, only).map(function (k) { return line(st, k); }).join('\n'); }
+  function text(st, only, short) { return keysOf(st || {}, only).map(function (k) { return line(st, k, short); }).join('\n'); }
   /* the state in the shape the renderers read (what HB.parse returns) */
   function view(st) {
     var d = { _l: [] };
@@ -858,7 +865,7 @@ var DEF = {
   quest: { on: true, btn: 'input' },
   profile: { on: true, stats: '근력, 민첩, 지능, 매력', uniq: 1, aff: 1, mind: 1 },
   shop: { on: false },
-  adv: { depth: 1, role: 0, cleanup: 1, strip: 1 }
+  adv: { depth: 1, role: 0, cleanup: 1, strip: 1, checkProfile: '' }
 };
 var ctx = null, S = null, CF = null, LINK = { src: 'none', ck: null };
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -1018,7 +1025,7 @@ function statusPrompt(c, W, st) {
     'Don\'t repeat unchanged lines or do the math; the System totals it.\n- ' + how.join('\n- ') +
     (tail.length ? '\n' + tail.join(' ') : '') + (mid ? '\n' + mid : '') +
     (missing.length ? '\nNot tracked yet, write in full this time: ' + missing.map(function (k) { return FULL[k]; }).join(' / ') : '') +
-    '\n[Current Status]\n' + HB.S.text(st, keys);
+    '\n[Current Status]' + (f.skill || f.title ? ' (skill/title effects omitted)' : '') + '\n' + HB.S.text(st, keys, true);
 }
 function buildPrompt(c, st) {
   var W = WORDS[c.lang] || WORDS.auto, out = [], f = c.status.fields;
@@ -1498,6 +1505,71 @@ function translated(st) {
 }
 function redrawStatus() { unrender('#chat .hb-host[data-hb="status"]'); scanAll(); }
 
+/* ---------- AI check: a model reads the recent story against the tracked status and lists what does not match ----------
+   It can run on another connection profile (a cheaper model) so the main model is untouched. Nothing changes until
+   the user picks the findings to apply; applied findings are stored as manual corrections. */
+var AUDIT_MSGS = 6, AUDIT_CHARS = 2400;
+function auditProfiles() {
+  var c = C(), svc = c.ConnectionManagerRequestService, list = [];
+  try { list = svc && svc.getSupportedProfiles ? svc.getSupportedProfiles() : []; } catch (e) { list = []; }
+  return (list || []).map(function (p) { return { id: p.id, name: p.name }; });
+}
+function auditPrompt(st, keys) {
+  var c = C(), chat = c.chat || [], parts = [], used = 0;
+  for (var i = chat.length - 1; i >= 0 && used < AUDIT_MSGS; i--) {
+    var m = chat[i], t = String(m.mes || '').replace(/<(system|noti|quest|profile|shop)>[\s\S]*?<\/\1>/gi, '').trim();
+    if (!t) continue;
+    if (t.length > AUDIT_CHARS) t = '…' + t.slice(-AUDIT_CHARS);
+    parts.unshift((isUserMes(m) ? '[{{user}}]\n' : '[Story]\n') + t);
+    used++;
+  }
+  var lang = (WORDS[CF.lang] || WORDS.auto).lang;
+  var sys = 'You check a game status tracker against the story. Find values in [Tracked Status] that contradict what happened in [Recent Story]: ' +
+    'money or items gained, spent or used but not recorded, damage or healing missed, wrong time or place, quests or effects that ended or began, and arithmetic slips. ' +
+    'Each <status> block inside the story lists the changes recorded for that reply. Only report clear contradictions, never guesses or style.\n' +
+    'Output one line per wrong value and nothing else:\nkey: corrected value // short reason in Korean\n' +
+    'For list keys (fx, stat, inv, skill, titles, quest) write the whole corrected list, items separated by ";" and fields by "|", in the same form as the tracked value. ' +
+    'Keep values in ' + lang + '. If nothing is wrong, output exactly: OK';
+  var user = '[Tracked Status]\n' + HB.S.text(st, keys) + '\n\n[Recent Story]\n' + parts.join('\n\n');
+  try { if (c.substituteParams) { sys = c.substituteParams(sys); user = c.substituteParams(user); } } catch (e) {}
+  return { sys: sys, user: user };
+}
+/* -> Promise<string> (the model's reply) */
+function auditAsk(sys, user) {
+  var c = C(), pid = CF.adv.checkProfile, svc = c.ConnectionManagerRequestService;
+  if (pid && svc && svc.sendRequest) {
+    return Promise.resolve(svc.sendRequest(pid, [{ role: 'system', content: sys }, { role: 'user', content: user }], 1200)).then(function (r) {
+      return typeof r === 'string' ? r : r && (r.content || r.message || '') || '';
+    });
+  }
+  if (!c.generateRaw) return Promise.reject(new Error('이 실리태번 버전에서는 점검을 쓸 수 없습니다.'));
+  return Promise.resolve(c.generateRaw({ prompt: user, systemPrompt: sys, responseLength: 1200 }));
+}
+/* model reply -> [{ k, v, why, old }] for keys that exist and really change */
+function auditParse(reply, st, keys) {
+  var out = [], seen = {};
+  String(reply || '').replace(/```[a-z]*|```/gi, '').split(/\r?\n/).forEach(function (l) {
+    var m = l.match(/^\s*[-*]?\s*([A-Za-z_]+)\s*[:：]\s*(.+?)\s*(?:\/\/\s*(.*))?$/);
+    if (!m) return;
+    var k = m[1].toLowerCase(), v = trimS(m[2]);
+    if (seen[k] || (keys.indexOf(k) < 0 && !(k in st))) return;
+    var old = HB.S.text(st, [k]).replace(/^[^:]+:\s*/, '');
+    if (!v || v === old) return;
+    seen[k] = 1;
+    out.push({ k: k, v: v, why: trimS(m[3] || ''), old: old });
+  });
+  return out;
+}
+function runAudit() {
+  var st = currentState(), keys = statusKeys(CF);
+  if (!Object.keys(st).length) return Promise.reject(new Error('아직 기록된 상태가 없습니다.'));
+  var p = auditPrompt(st, keys);
+  return auditAsk(p.sys, p.user).then(function (reply) {
+    if (/^\s*OK\s*$/i.test(reply || '')) return [];
+    return auditParse(reply, st, keys);
+  });
+}
+
 /* ---------- settings window (light, readable, separate from the window design) ---------- */
 var UI_CSS = [
 '#hbs-ov{position:fixed;top:0;left:0;width:100vw;height:100vh;height:100dvh;margin:0;z-index:40000;background:rgba(15,23,32,.45);display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;font:14px/1.55 "Pretendard","IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;color:#1d2530;text-align:left;text-shadow:none}',
@@ -1610,6 +1682,17 @@ var UI_CSS = [
 '#hbs-ov .hbs-empty{font-size:12.5px;color:var(--dim);padding:14px;border:1px dashed var(--b2);border-radius:10px;text-align:center}',
 '#hbs-ov .hbs-note{font-size:12.5px;color:#7a5a12;background:#fff7e3;border:1px solid #f1dfae;border-radius:8px;padding:8px 12px}',
 '#hbs-ov .hbs-num{width:84px}',
+'#hbs-ov .hbs-line.nowrap .hbs-sel{flex:1;min-width:0}',
+'#hbs-ov .hbs-audit{display:flex;flex-direction:column;border:1px solid var(--b);border-radius:10px;overflow:hidden}',
+'#hbs-ov .hbs-afind{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-top:1px solid var(--b);cursor:pointer;margin:0}',
+'#hbs-ov .hbs-afind:first-child{border-top:0}',
+'#hbs-ov .hbs-afind input{margin:3px 0 0;flex:none;width:16px;height:16px;accent-color:var(--ac)}',
+'#hbs-ov .hbs-afind .tx{display:flex;flex-direction:column;gap:2px;min-width:0}',
+'#hbs-ov .hbs-afind b{font-size:13px;font-weight:700;color:var(--tx)}',
+'#hbs-ov .hbs-afind .chg{font-size:13px;color:var(--tx);word-break:break-word}',
+'#hbs-ov .hbs-afind .chg s{color:var(--dim)}',
+'#hbs-ov .hbs-afind .chg em{font-style:normal;font-weight:600;color:var(--ac2)}',
+'#hbs-ov .hbs-afind .why{font-size:12.5px;color:var(--dim)}',
 '#hbs-ov .hbs{position:relative}',
 '#hbs-ov .hbs-ask{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,32,.45)}',
 '#hbs-ov .hbs-ask>div{width:min(340px,100%);background:#fff;border-radius:12px;padding:18px 18px 14px;box-shadow:0 16px 40px rgba(10,20,35,.3);display:flex;flex-direction:column;gap:14px}',
@@ -1627,7 +1710,15 @@ var UI_CSS = [
 '#hbs-ov .hbs-mini{display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg3)}',
 '#hbs-ov .hbs-mini button{border:0!important;background:none;color:var(--dim);font:inherit;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;margin:0}',
 '#hbs-ov .hbs-mini button[aria-pressed="true"]{background:#fff;color:var(--ac2);box-shadow:0 1px 2px rgba(20,35,55,.18)}',
-'#hbs-ov .hbs-code{margin:0;padding:10px 12px;font:12px/1.6 "JetBrains Mono",ui-monospace,Consolas,monospace;color:#d6ecf8;background:rgba(4,12,22,.55);border:1px solid rgba(120,214,255,.2);white-space:pre-wrap;word-break:break-word;text-align:left;max-height:320px;overflow:auto}',
+'#hbs-ov .hbs-pvbar{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}',
+'#hbs-ov .hbs-pvbar .hbs-mini{background:rgba(255,255,255,.12)}',
+'#hbs-ov .hbs-pvbar .hbs-mini button{color:#cfe3ef}',
+'#hbs-ov .hbs-pvbar .hbs-mini button[aria-pressed="true"]{background:#fff;color:var(--ac2)}',
+'#hbs-ov .hbs-pvtag{margin-left:auto;font-size:11.5px;color:#ffd58a}',
+'#hbs-ov .hbs-pvbar .hbs-btn.ln{color:#9fd6ff;padding:2px 4px}',
+'#hbs-ov textarea.hbs-code{display:block;width:100%;resize:vertical;outline:none;border-radius:0}',
+'#hbs-ov textarea.hbs-code:focus{border-color:rgba(120,214,255,.6)}',
+'#hbs-ov .hbs-code{margin:0;padding:10px 12px;font:12px/1.6 "JetBrains Mono",ui-monospace,Consolas,monospace;color:#d6ecf8;background:rgba(4,12,22,.55);border:1px solid rgba(120,214,255,.2)!important;white-space:pre-wrap;word-break:break-word;text-align:left;max-height:360px;overflow:auto}',
 '#hbs-ov .hbs-stgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 12px}',
 '#hbs-ov .hbs-ta.hbs-stlist{min-height:0;font-size:13px;line-height:1.7;white-space:pre;overflow-x:auto}',
 '#hbs-ov .hbs-guide{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--tx);line-height:1.6}',
@@ -1729,7 +1820,7 @@ function importTheme(file) {
     return { id: id, name: S.themes[id].name, update: update };
   });
 }
-var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false };
+var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false, prevMode: {}, prevEdit: {}, audit: null };
 var CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 function h(s) { return HB.esc(s); }
 function getPath(o, p) { return p.split('.').reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
@@ -1758,6 +1849,22 @@ function presetSummary(p) {
 var STATE_LABEL = { date: '날짜', time: '시간', loc: '장소', weather: '날씨', name: '이름', lv: '레벨', rank: '랭크', role: '직업 · 신분', title: '장착 칭호', titles: '보유 칭호', exp: '경험치',
   hp: 'HP', mp: 'MP', fat: '피로도', fx: '버프 · 디버프', quest: '진행 중 퀘스트', money: '소지금', point: '포인트', sp: '잔여 스탯 포인트', stat: '능력치', inv: '인벤토리', skill: '스킬' };
 var STATE_HINT = { fx: '+버프 (남은 시간) / -디버프', quest: '이름|남은 시간', titles: '칭호|효과', stat: '이름 수치 등급', inv: '이름|희귀도|수량', skill: '이름|레벨|종류|비용|효과' };
+/* AI check: pick a model, run, then choose which findings to apply */
+function auditSection(c) {
+  var profs = auditProfiles(), sel = c.adv.checkProfile, busy = ui.audit === 'busy', res = Array.isArray(ui.audit) ? ui.audit : null;
+  var html = '<div class="hbs-sec"><h3>AI 점검</h3><p class="hbs-help">최근 응답 ' + AUDIT_MSGS + '개를 읽고 상태와 맞지 않는 값을 찾습니다. 누를 때마다 요청이 한 번 나갑니다.</p>' +
+    '<div class="hbs-line nowrap"><select class="hbs-sel" data-k="adv.checkProfile" aria-label="점검할 모델"><option value="">지금 연결된 모델</option>' +
+    profs.map(function (p) { return '<option value="' + h(p.id) + '"' + (p.id === sel ? ' selected' : '') + '>' + h(p.name) + '</option>'; }).join('') + '</select>' +
+    '<button type="button" class="hbs-btn pri" data-act="audit"' + (busy ? ' disabled' : '') + '>' + (busy ? '점검 중…' : '점검하기') + '</button></div>';
+  if (res && !res.length) html += '<div class="hbs-empty">맞지 않는 값을 찾지 못했습니다.</div>';
+  if (res && res.length) {
+    html += '<div class="hbs-audit">' + res.map(function (r, i) {
+      return '<label class="hbs-afind"><input type="checkbox" data-afind="' + i + '" checked><span class="tx"><b>' + h(STATE_LABEL[r.k] || r.k) + '</b>' +
+        '<span class="chg"><s>' + h(r.old || '없음') + '</s> → <em>' + h(r.v) + '</em></span>' + (r.why ? '<span class="why">' + h(r.why) + '</span>' : '') + '</span></label>';
+    }).join('') + '</div><div class="hbs-line" style="justify-content:flex-end"><button type="button" class="hbs-btn" data-act="audit-clear">닫기</button><button type="button" class="hbs-btn pri" data-act="audit-apply">선택한 항목 적용</button></div>';
+  }
+  return html + '</div>';
+}
 function worldChips(c) {
   var ks = Object.keys(S.worlds);
   return '<div class="hbs-chips">' + ks.map(function (k) {
@@ -1789,7 +1896,7 @@ var PANELS = {
       '<div class="hbs-f"><label for="hbs-world" style="display:flex">세계관 · 작가 노트<span class="hbs-cnt" id="hbs-wc"></span></label>' +
         '<textarea id="hbs-world" class="hbs-ta" data-k="world" maxlength="1200" placeholder="이 시스템이 어떤 이야기에 속하는지 짧게 적습니다. 비워 두면 봇 설정을 그대로 따릅니다. {{user}}, {{char}}를 쓸 수 있습니다.">' + h(c.world) + '</textarea>' + worldChips(c) + '</div></div>' +
     /* status window */
-    '<div class="hbs-sec"><h3>기본 상태창<span class="hbs-sp"></span><span class="hbs-mini" role="group" aria-label="미리보기"><button type="button" data-prevmode="design" aria-pressed="' + (ui.prevMode !== 'code') + '">디자인</button><button type="button" data-prevmode="code" aria-pressed="' + (ui.prevMode === 'code') + '">코드</button></span></h3><div class="hbs-card' + (c.status.on ? '' : ' off') + '">' + row('status.on', '상태창', '모든 AI 응답의 맨 위에 붙습니다.') +
+    '<div class="hbs-sec"><h3>기본 상태창</h3><div class="hbs-card' + (c.status.on ? '' : ' off') + '">' + row('status.on', '상태창', '모든 AI 응답의 맨 위에 붙습니다.') +
       (c.status.on ? '<div class="hbs-opt">' +
         '<div class="hbs-f"><span class="l">성장 표시</span><div class="hbs-chips">' + chip('status.grow', 'lv', '레벨 · 경험치') + chip('status.grow', 'rank', '랭크 · 진행도') + '</div></div>' +
         acc('fields', '표시할 항목', picked.length + '개 · ' + picked.join(', '),
@@ -1827,7 +1934,7 @@ var PANELS = {
         var its = st[k] || [];
         return '<div class="hbs-f"><label for="hbs-st-' + k + '" style="display:flex">' + (STATE_LABEL[k] || k) + '<span class="hbs-cnt">' + (STATE_HINT[k] || '') + '</span></label>' +
           '<textarea id="hbs-st-' + k + '" class="hbs-ta hbs-stlist" data-st="' + k + '" rows="' + Math.max(2, its.length + 1) + '" placeholder="한 줄에 하나씩 적습니다.">' + h(its.join('\n')) + '</textarea></div>';
-      }).join('') + '</div>';
+      }).join('') + '</div>' + (empty ? '' : auditSection(c));
   },
   design: function (c) {
     return '<div class="hbs-sec"><h3>테마 <small>지금 연결된 설정에 적용됩니다</small></h3><div class="hbs-themes">' + themeList().map(function (t) {
@@ -1902,16 +2009,28 @@ function linkBar() {
     '<div class="hbs-seg" role="group" aria-label="연결">' + b('off', '끄기', !chat) + b('chat', '이 채팅', !chat) + b('char', who + ' 전체', !chat || !ck) + '</div>' +
     '<p class="hbs-lnote"><i></i>' + h(note) + (LINK.src === 'off' && LINK.charLinked ? ' <button type="button" class="hbs-btn ln" data-act="unlink-char">' + who + ' 연결 해제</button>' : '') + '</p></div>';
 }
+/* the sample a preview shows for a window kind, before any edit */
+function sampleOf(k, c) {
+  if (k === 'status') return sampleStatus(c);
+  if (k === 'profile') return sampleProfile(c);
+  if (k === 'system') { var st = ui.sysPrev || 'notice'; return SAMPLE.sys[st === 'levelup' && c.status.grow === 'rank' ? 'rankup' : st]; }
+  return SAMPLE[k];
+}
+/* one preview box: a design / code switch on top; in code view the block can be edited and the design follows it */
+function drawPrev(el, c) {
+  var k = el.getAttribute('data-prev'), edited = ui.prevEdit[k] != null, raw = edited ? ui.prevEdit[k] : sampleOf(k, c), code = ui.prevMode[k] === 'code';
+  el.innerHTML = '<div class="hbs-pvbar"><span class="hbs-mini" role="group" aria-label="미리보기"><button type="button" data-pvmode="design" aria-pressed="' + !code + '">디자인</button>' +
+    '<button type="button" data-pvmode="code" aria-pressed="' + code + '">코드</button></span>' + (edited ? '<span class="hbs-pvtag">수정됨</span><button type="button" class="hbs-btn ln" data-pvreset>초기화</button>' : '') + '</div>';
+  if (!raw && k === 'status') { el.insertAdjacentHTML('beforeend', '<div class="hbs-empty" style="background:#fff">표시할 항목을 하나 이상 고르세요.</div>'); return; }
+  if (code) {
+    var ta = D.createElement('textarea'); ta.className = 'hbs-code'; ta.spellcheck = false; ta.setAttribute('data-pvedit', k);
+    ta.value = '<' + k + '>\n' + raw + '\n</' + k + '>'; ta.rows = Math.min(18, ta.value.split('\n').length + 1);
+    el.appendChild(ta); return;
+  }
+  el.appendChild(makeHost(k, raw, { quiet: true, preview: true }));
+}
 function drawPreviews(body, c) {
-  body.querySelectorAll('[data-prev]').forEach(function (el) {
-    var k = el.getAttribute('data-prev'), raw = k === 'status' ? sampleStatus(c) : k === 'profile' ? sampleProfile(c) : SAMPLE[k];
-    if (k === 'system') { var st = ui.sysPrev || 'notice'; raw = SAMPLE.sys[st === 'levelup' && c.status.grow === 'rank' ? 'rankup' : st]; }
-    el.innerHTML = '';
-    if (k === 'status' && !raw) { el.innerHTML = '<div class="hbs-empty" style="background:#fff">표시할 항목을 하나 이상 고르세요.</div>'; return; }
-    /* code view: the block exactly as the AI writes it */
-    if (ui.prevMode === 'code') { var pc = D.createElement('pre'); pc.className = 'hbs-code'; pc.textContent = '<' + k + '>\n' + raw + '\n</' + k + '>'; el.appendChild(pc); return; }
-    el.appendChild(makeHost(k, raw, { quiet: true, preview: true }));
-  });
+  body.querySelectorAll('[data-prev]').forEach(function (el) { drawPrev(el, c); });
   body.querySelectorAll('[data-pv]').forEach(function (el) {
     var t = getTheme(el.getAttribute('data-pv'));
     el.appendChild(makeHost('system', SAMPLE.system, { quiet: true, preview: true, css: themeCss(t) }));
@@ -1993,6 +2112,19 @@ var ACTIONS = {
     var id = b.dataset.id;
     ask('"' + id + '" 세계관을 삭제하시겠습니까?', '삭제').then(function (ok) { if (!ok) return; delete S.worlds[id]; ui.anchor = '#hbs-world'; commit(true); });
   },
+  audit: function () {
+    ui.audit = 'busy'; ui.anchor = '[data-act="audit"]'; paint();
+    runAudit().then(function (r) { ui.audit = r; ui.anchor = '[data-act="audit"]'; paint(); },
+      function (e) { ui.audit = null; paint(); toast('점검하지 못했습니다: ' + (e && e.message || e), 'error'); });
+  },
+  'audit-clear': function () { ui.audit = null; paint(); },
+  'audit-apply': function () {
+    var res = Array.isArray(ui.audit) ? ui.audit : [], lines = [];
+    ui.el.querySelectorAll('[data-afind]').forEach(function (cb) { var r = res[+cb.dataset.afind]; if (cb.checked && r) lines.push(r.k + ': ' + r.v); });
+    if (!lines.length) { toast('적용할 항목을 고르세요.', 'warning'); return; }
+    if (!saveCorrection(lines)) { toast('적용하지 못했습니다.', 'error'); return; }
+    ui.audit = null; redrawStatus(); applyPrompt(); paint(); toast(lines.length + '개 항목을 고쳤습니다.', 'success');
+  },
   'st-reset': function () { ui.dirty = false; paint(); },
   /* only the values that differ from the tracked state are stored, as corrections on the last message */
   'st-save': function () {
@@ -2051,7 +2183,7 @@ function openSettings() {
   ov._unplace = function () { P.cancelAnimationFrame(raf); };
   ov.querySelector('.hbs-x').addEventListener('click', closeSettings);
   ov.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.stopPropagation(); closeSettings(); } });
-  ov.querySelector('.hbs-tabs').addEventListener('click', function (e) { var b = e.target.closest('button[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.dirty = false; ov.querySelector('.hbs-body').scrollTop = 0; paint(); } });
+  ov.querySelector('.hbs-tabs').addEventListener('click', function (e) { var b = e.target.closest('button[data-tab]'); if (b) { ui.tab = b.dataset.tab; ui.dirty = false; if (ui.audit !== 'busy') ui.audit = null; ov.querySelector('.hbs-body').scrollTop = 0; paint(); } });
   ov.querySelector('#hbs-linkbar').addEventListener('click', function (e) {
     var b = e.target.closest('[data-link]'); if (b && !b.disabled) { setLink(b.dataset.link); commit(true); return; }
     var a = e.target.closest('[data-act]'); if (a && ACTIONS[a.dataset.act]) ACTIONS[a.dataset.act](a);
@@ -2060,11 +2192,12 @@ function openSettings() {
   body.addEventListener('click', function (e) {
     var ac = e.target.closest('[data-acc]');
     if (ac) { var open = ac.getAttribute('aria-expanded') !== 'true'; ui.acc[ac.dataset.acc] = open; ac.setAttribute('aria-expanded', open); ac.nextElementSibling.hidden = !open; return; }
-    var pm = e.target.closest('[data-prevmode]');
-    if (pm) { ui.prevMode = pm.dataset.prevmode; ui.anchor = '[data-prevmode="' + ui.prevMode + '"]'; paint(); return; }
+    var pv = e.target.closest('[data-prev]');
+    if (pv && e.target.closest('[data-pvmode]')) { ui.prevMode[pv.dataset.prev] = e.target.closest('[data-pvmode]').dataset.pvmode; drawPrev(pv, CF); return; }
+    if (pv && e.target.closest('[data-pvreset]')) { delete ui.prevEdit[pv.dataset.prev]; drawPrev(pv, CF); return; }
     var sp = e.target.closest('[data-sysprev]');
     if (sp) {
-      ui.sysPrev = sp.dataset.sysprev;
+      ui.sysPrev = sp.dataset.sysprev; delete ui.prevEdit.system;
       sp.parentNode.querySelectorAll('[data-sysprev]').forEach(function (x) { x.setAttribute('aria-pressed', x === sp ? 'true' : 'false'); });
       var pv = body.querySelector('[data-prev="system"]'); if (pv) drawPreviews(pv.parentNode, CF);
       return;
@@ -2093,6 +2226,13 @@ function openSettings() {
   });
   body.addEventListener('input', function (e) {
     var t = e.target;
+    if (t.dataset && t.dataset.pvedit) {                             /* preview code edited: keep it for this session only */
+      var k = t.dataset.pvedit, body2 = t.value.replace(/^\s*<[a-z]+>[ \t]*\r?\n?/i, '').replace(/\r?\n?[ \t]*<\/[a-z]+>\s*$/i, '');
+      ui.prevEdit[k] = body2;
+      var bar = t.parentNode.querySelector('.hbs-pvbar');
+      if (bar && !bar.querySelector('[data-pvreset]')) bar.insertAdjacentHTML('beforeend', '<span class="hbs-pvtag">수정됨</span><button type="button" class="hbs-btn ln" data-pvreset>초기화</button>');
+      return;
+    }
     if (t.dataset && t.dataset.st) { ui.dirty = true; return; }   /* status editor: saved with its own button */
     if (!t.dataset || !t.dataset.k || t.type === 'checkbox') return;
     var v = t.type === 'number' ? Math.max(0, Math.min(20, parseInt(t.value, 10) || 0)) : t.value;
