@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.5.4 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.0.0 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.5.4";
+var VERSION = "1.0.0";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
