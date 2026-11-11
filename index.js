@@ -507,7 +507,7 @@ HB.R.status = function (d) {
     body += '<div class="lbl">' + panes[0][1] + '</div>' + panes[0][3];
   }
 
-  if (body) body += '<div class="st-acts"><button class="st-book" type="button">' + T('book') + '</button><button class="st-edit" type="button">' + T('edit') + '</button></div>';
+  if (body) body += '<div class="st-acts">' + (HB.opt.bookOn === false ? '' : '<button class="st-book" type="button">' + T('book') + '</button>') + '<button class="st-edit" type="button">' + T('edit') + '</button></div>';
   /* header: 상태창 STATUS on the left, name and level on the right */
   var hd = '<div class="hd">' + H.ic('status') + '<span class="hd-t"><b>' + T('status') + '</b><small>Status</small></span>' +
     '<span class="hd-r">' + (name ? '<b class="nm">' + H.esc(name) + '</b>' : '') + tail + '</span></div>';
@@ -882,6 +882,8 @@ function loadStore() {
   var es = ctx.extensionSettings || (ctx.extensionSettings = {});
   var s = es[KEY]; if (!s || typeof s !== 'object') s = es[KEY] = {};
   s.cfg = merge(DEF, s.cfg || {});
+  /* this device's own choices, the same in every chat (paths starting with "@" in the settings window) */
+  s.ui = merge({ book: 1, bookAt: 'wand' }, s.ui || {});
   s.presets = s.presets || {}; s.themes = s.themes || {}; s.chars = s.chars || {}; s.worlds = s.worlds || {};
   S = s;
 }
@@ -1330,9 +1332,11 @@ function applyAll(opt) {
   var c = CF;
   HB.lang = c.lang === 'auto' ? 'ko' : c.lang;
   HB.opt.questBtn = c.quest.btn;
+  HB.opt.bookOn = !!S.ui.book;
   applyPrompt();
   ensureRegex();
-  var sig = c.theme + '|' + HB.lang + '|' + c.quest.btn + '|' + (opt && opt.force ? Math.random() : '');
+  placeBook();
+  var sig = c.theme + '|' + HB.lang + '|' + c.quest.btn + '|' + S.ui.book + '|' + (opt && opt.force ? Math.random() : '');
   if (sig !== lastSig) { lastSig = sig; applyTheme(); rerenderAll(); }
   hideOld();
 }
@@ -1823,8 +1827,9 @@ function importTheme(file) {
 var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false, prevMode: {}, prevEdit: {}, audit: null };
 var CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 function h(s) { return HB.esc(s); }
-function getPath(o, p) { return p.split('.').reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
-function setPath(o, p, v) { var ks = p.split('.'), last = ks.pop(), t = ks.reduce(function (a, k) { return a[k]; }, o); t[last] = v; }
+/* "@name" = a device-wide choice kept in S.ui instead of the current chat's settings */
+function getPath(o, p) { if (p.charAt(0) === '@') { o = S.ui; p = p.slice(1); } return p.split('.').reduce(function (a, k) { return a == null ? a : a[k]; }, o); }
+function setPath(o, p, v) { if (p.charAt(0) === '@') { o = S.ui; p = p.slice(1); } var ks = p.split('.'), last = ks.pop(), t = ks.reduce(function (a, k) { return a[k]; }, o); t[last] = v; }
 function sw(path) { return '<label class="hbs-sw"><input type="checkbox" data-k="' + path + '"' + (getPath(CF, path) ? ' checked' : '') + '><i></i></label>'; }
 function chip(path, val, label) { return '<button type="button" class="hbs-chip" data-set="' + path + '" data-v="' + h(val) + '" aria-pressed="' + (String(getPath(CF, path)) === String(val)) + '">' + h(label) + '</button>'; }
 function ck(path, label) { return '<label class="hbs-ck"><input type="checkbox" data-k="' + path + '"' + (getPath(CF, path) ? ' checked' : '') + '>' + h(label) + '</label>'; }
@@ -1955,6 +1960,8 @@ var PANELS = {
       '<div class="hbs-f"><span class="l">역할</span><div class="hbs-chips">' + chip('adv.role', 0, 'System') + chip('adv.role', 1, 'User') + chip('adv.role', 2, 'Assistant') + '</div></div></div></div>' +
       '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 응답의 창 접어 두기', '최근 3개 응답보다 오래된 창은 그리지 않고 코드로 접어 둡니다. 긴 채팅이 가벼워지고, AI에게는 그대로 보냅니다.') + '</div>' +
       '<div class="hbs-card">' + row('adv.strip', '지난 상태창을 AI에게 보내지 않기', '현재 상태를 따로 알려 주므로 지난 상태창은 AI가 읽는 내용에서 뺍니다. 토큰이 줄어듭니다.') + '</div></div>' +
+      '<div class="hbs-sec"><h3>수첩</h3><div class="hbs-card">' + row('@book', '수첩 쓰기', '채팅에 나온 인물 창과 마지막 상점을 모아 봅니다. 모든 채팅에 똑같이 적용됩니다.') + '</div>' +
+      (S.ui.book ? '<div class="hbs-f"><span class="l">버튼 위치</span><div class="hbs-chips">' + chip('@bookAt', 'wand', '마법봉 메뉴') + chip('@bookAt', 'input', '입력창 아이콘') + chip('@bookAt', 'float', '떠 있는 버튼') + '</div></div>' : '') + '</div>' +
       '<div class="hbs-sec"><h3>AI에게 보내는 지침 <small>지금 설정으로 만든 내용</small><span class="hbs-cnt">' + text.length + '자 · 약 ' + Math.round(text.length / 3.6) + ' 토큰</span></h3>' +
       (LINK.active ? '' : '<div class="hbs-note">이 채팅은 연결되어 있지 않아 지금은 이 지침을 보내지 않습니다.</div>') +
       '<textarea class="hbs-ta mono" readonly id="hbs-prompt">' + h(text) + '</textarea>' +
@@ -2244,7 +2251,7 @@ function addWand() {
     try { openSettings(); }
     catch (e) { console.error('[시스템 상태창] 설정 창 오류', e); toast('설정 창을 열지 못했습니다: ' + e.message, 'error'); }
   });
-  wandItem(menu, 'hb-wand-book', 'fa-book', '수첩', HB.opt.openBook);
+  placeBook();
 }
 function wandItem(menu, id, icon, label, go) {
   var old = D.getElementById(id);
@@ -2277,7 +2284,10 @@ UI_CSS += '\n' + [
 '#hbn-ov .hbn-who button{border:1px solid rgba(120,214,255,.25)!important;background:rgba(120,214,255,.05);color:#cfe3ef;font:inherit;font-size:13px;padding:5px 12px;border-radius:999px;cursor:pointer;margin:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 '#hbn-ov .hbn-who button[aria-pressed="true"]{background:rgba(120,214,255,.2);border-color:rgba(120,214,255,.7)!important;color:#fff;font-weight:600}',
 '#hbn-ov .hbn-empty{padding:28px 8px;text-align:center;color:#7d93a5;font-size:13px}',
-'#hbn-ov .hbn-at{align-self:flex-end;margin-top:-6px;font-size:11.5px;color:#6f8698}'
+'#hbn-ov .hbn-at{align-self:flex-end;margin-top:-6px;font-size:11.5px;color:#6f8698}',
+/* the floating button sits just above the input bar, right side; faint until touched */
+'#hb-book-float{position:absolute;right:12px;bottom:calc(100% + 10px);width:40px;height:40px;border-radius:50%;display:grid;place-items:center;box-sizing:border-box;background:rgba(10,21,33,.55);color:#cfe9ff!important;border:1px solid rgba(120,214,255,.35)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.6;cursor:pointer;z-index:30;font-size:16px;transition:opacity .15s}',
+'#hb-book-float:hover,#hb-book-float:focus-visible{opacity:1}'
 ].join('\n');
 
 var book = { el: null, tab: 'npc', who: null };
@@ -2376,6 +2386,35 @@ function openBook(tab) {
   paintBook();
 }
 function closeBook() { if (book.el) { try { book.el._unplace(); } catch (e) {} book.el.remove(); book.el = null; } }
+/* where the notebook button lives (advanced tab): wand menu, an icon beside the wand in the input bar, or a floating button */
+var BOOK_SPOTS = { wand: 'hb-wand-book', input: 'hb-book-btn', float: 'hb-book-float' };
+function bookBtn(id, cls) {
+  var el = D.createElement('div'); el.id = id; el.className = cls; el.setAttribute('data-inst', INSTANCE);
+  el.title = '수첩'; el.tabIndex = 0; el.setAttribute('role', 'button'); el.setAttribute('aria-label', '수첩');
+  el.addEventListener('click', function () { HB.opt.openBook(); });
+  el.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); HB.opt.openBook(); } });
+  return el;
+}
+function placeBook() {
+  var at = S && S.ui && S.ui.book ? S.ui.bookAt : '';
+  if (!BOOK_SPOTS[at]) at = S && S.ui && S.ui.book ? 'wand' : '';
+  Object.keys(BOOK_SPOTS).forEach(function (k) {
+    var el = D.getElementById(BOOK_SPOTS[k]);
+    if (el && (k !== at || el.getAttribute('data-inst') !== INSTANCE)) el.remove();
+  });
+  if (!at) { closeBook(); return; }
+  if (D.getElementById(BOOK_SPOTS[at])) return;
+  if (at === 'wand') {
+    var menu = D.getElementById('extensionsMenu');
+    if (menu) wandItem(menu, 'hb-wand-book', 'fa-book', '수첩', HB.opt.openBook);
+  } else if (at === 'input') {
+    var left = D.getElementById('leftSendForm'), wand = D.getElementById('extensionsMenuButton');
+    if (left) left.insertBefore(bookBtn('hb-book-btn', 'fa-solid fa-book interactable'), wand && wand.parentNode === left ? wand.nextSibling : null);
+  } else {
+    var fs = D.getElementById('form_sheld');
+    if (fs) { var f = bookBtn('hb-book-float', ''); f.innerHTML = '<i class="fa-solid fa-book" aria-hidden="true"></i>'; fs.appendChild(f); }
+  }
+}
 HB.opt.openBook = function () { try { openBook(); } catch (e) { console.error('[시스템 상태창] 수첩 오류', e); toast('수첩을 열지 못했습니다: ' + e.message, 'error'); } };
 
 /* ---------- start / stop ---------- */
@@ -2400,7 +2439,7 @@ function destroy() {
   try { clearInterval(wandTimer); clearTimeout(stateT); clearTimeout(saveT); closeSettings(); closeBook(); } catch (e) {}
   try { ctx.setExtensionPrompt(PROMPT_ID, '', 1, 0, false, 0); } catch (e) {}
   try { unrender(); } catch (e) {}
-  ['hb-wand', 'hb-wand-book', 'hbs-style'].forEach(function (id) { var el = D.getElementById(id); if (el && (id === 'hbs-style' || el.getAttribute('data-inst') === INSTANCE)) el.remove(); });
+  ['hb-wand', 'hb-wand-book', 'hb-book-btn', 'hb-book-float', 'hbs-style'].forEach(function (id) { var el = D.getElementById(id); if (el && (id === 'hbs-style' || el.getAttribute('data-inst') === INSTANCE)) el.remove(); });
   D.querySelectorAll('link[data-hb-font]').forEach(function (l) { l.remove(); });
   if (P.__HB_SYSTEM_WINDOW__ && P.__HB_SYSTEM_WINDOW__.destroy === destroy) delete P.__HB_SYSTEM_WINDOW__;
 }
@@ -2414,7 +2453,7 @@ function start() {
   HB.dead = false; listeners = [];
   if (P.__HB_SYSTEM_WINDOW__) { try { P.__HB_SYSTEM_WINDOW__.destroy(); } catch (e) {} }
   /* a reloaded copy may not have cleaned up (its frame can already be gone): clear what it left on the page */
-  ['hb-wand', 'hb-wand-book', 'hbs-ov', 'hbn-ov', 'hbs-style'].forEach(function (id) { var el = D.getElementById(id); if (el) el.remove(); });
+  ['hb-wand', 'hb-wand-book', 'hb-book-btn', 'hb-book-float', 'hbs-ov', 'hbn-ov', 'hbs-style'].forEach(function (id) { var el = D.getElementById(id); if (el) el.remove(); });
   try { unrender(); } catch (e) {}
   loadStore();
   var st = D.createElement('style'); st.id = 'hbs-style'; st.textContent = UI_CSS; D.head.appendChild(st);
