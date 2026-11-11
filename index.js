@@ -883,7 +883,9 @@ function loadStore() {
   var s = es[KEY]; if (!s || typeof s !== 'object') s = es[KEY] = {};
   s.cfg = merge(DEF, s.cfg || {});
   /* this device's own choices, the same in every chat (paths starting with "@" in the settings window) */
+  var prev = s.ui && s.ui.prev;
   s.ui = merge({ book: 1, bookAt: 'wand' }, s.ui || {});
+  s.ui.prev = prev && typeof prev === 'object' ? prev : {};   /* preview code the user edited, by window kind */
   s.presets = s.presets || {}; s.themes = s.themes || {}; s.chars = s.chars || {}; s.worlds = s.worlds || {};
   S = s;
 }
@@ -1824,7 +1826,7 @@ function importTheme(file) {
     return { id: id, name: S.themes[id].name, update: update };
   });
 }
-var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false, prevMode: {}, prevEdit: {}, audit: null };
+var ui = { tab: 'main', el: null, savedT: 0, acc: {}, dirty: false, prevMode: {}, audit: null };
 var CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
 function h(s) { return HB.esc(s); }
 /* "@name" = a device-wide choice kept in S.ui instead of the current chat's settings */
@@ -2025,7 +2027,7 @@ function sampleOf(k, c) {
 }
 /* one preview box: a design / code switch on top; in code view the block can be edited and the design follows it */
 function drawPrev(el, c) {
-  var k = el.getAttribute('data-prev'), edited = ui.prevEdit[k] != null, raw = edited ? ui.prevEdit[k] : sampleOf(k, c), code = ui.prevMode[k] === 'code';
+  var k = el.getAttribute('data-prev'), edited = S.ui.prev[k] != null, raw = edited ? S.ui.prev[k] : sampleOf(k, c), code = ui.prevMode[k] === 'code';
   el.innerHTML = '<div class="hbs-pvbar"><span class="hbs-mini" role="group" aria-label="미리보기"><button type="button" data-pvmode="design" aria-pressed="' + !code + '">디자인</button>' +
     '<button type="button" data-pvmode="code" aria-pressed="' + code + '">코드</button></span>' + (edited ? '<span class="hbs-pvtag">수정됨</span><button type="button" class="hbs-btn ln" data-pvreset>초기화</button>' : '') + '</div>';
   if (!raw && k === 'status') { el.insertAdjacentHTML('beforeend', '<div class="hbs-empty" style="background:#fff">표시할 항목을 하나 이상 고르세요.</div>'); return; }
@@ -2192,10 +2194,10 @@ function openSettings() {
     if (ac) { var open = ac.getAttribute('aria-expanded') !== 'true'; ui.acc[ac.dataset.acc] = open; ac.setAttribute('aria-expanded', open); ac.nextElementSibling.hidden = !open; return; }
     var pv = e.target.closest('[data-prev]');
     if (pv && e.target.closest('[data-pvmode]')) { ui.prevMode[pv.dataset.prev] = e.target.closest('[data-pvmode]').dataset.pvmode; drawPrev(pv, CF); return; }
-    if (pv && e.target.closest('[data-pvreset]')) { delete ui.prevEdit[pv.dataset.prev]; drawPrev(pv, CF); return; }
+    if (pv && e.target.closest('[data-pvreset]')) { delete S.ui.prev[pv.dataset.prev]; save(); drawPrev(pv, CF); return; }
     var sp = e.target.closest('[data-sysprev]');
     if (sp) {
-      ui.sysPrev = sp.dataset.sysprev; delete ui.prevEdit.system;
+      ui.sysPrev = sp.dataset.sysprev; delete S.ui.prev.system; save();
       sp.parentNode.querySelectorAll('[data-sysprev]').forEach(function (x) { x.setAttribute('aria-pressed', x === sp ? 'true' : 'false'); });
       var pv = body.querySelector('[data-prev="system"]'); if (pv) drawPreviews(pv.parentNode, CF);
       return;
@@ -2224,9 +2226,9 @@ function openSettings() {
   });
   body.addEventListener('input', function (e) {
     var t = e.target;
-    if (t.dataset && t.dataset.pvedit) {                             /* preview code edited: keep it for this session only */
+    if (t.dataset && t.dataset.pvedit) {                             /* preview code edited: kept on this device until reset */
       var k = t.dataset.pvedit, body2 = t.value.replace(/^\s*<[a-z]+>[ \t]*\r?\n?/i, '').replace(/\r?\n?[ \t]*<\/[a-z]+>\s*$/i, '');
-      ui.prevEdit[k] = body2;
+      S.ui.prev[k] = body2; save();
       var bar = t.parentNode.querySelector('.hbs-pvbar');
       if (bar && !bar.querySelector('[data-pvreset]')) bar.insertAdjacentHTML('beforeend', '<span class="hbs-pvtag">수정됨</span><button type="button" class="hbs-btn ln" data-pvreset>초기화</button>');
       return;
