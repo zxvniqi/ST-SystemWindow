@@ -2285,8 +2285,8 @@ UI_CSS += '\n' + [
 '#hbn-ov .hbn-who button[aria-pressed="true"]{background:rgba(120,214,255,.2);border-color:rgba(120,214,255,.7)!important;color:#fff;font-weight:600}',
 '#hbn-ov .hbn-empty{padding:28px 8px;text-align:center;color:#7d93a5;font-size:13px}',
 '#hbn-ov .hbn-at{align-self:flex-end;margin-top:-6px;font-size:11.5px;color:#6f8698}',
-/* the floating button sits just above the input bar, right side; faint until touched */
-'#hb-book-float{position:absolute;right:12px;bottom:calc(100% + 10px);width:40px;height:40px;border-radius:50%;display:grid;place-items:center;box-sizing:border-box;background:rgba(10,21,33,.55);color:#cfe9ff!important;border:1px solid rgba(120,214,255,.35)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.6;cursor:pointer;z-index:30;font-size:16px;transition:opacity .15s}',
+/* the floating button sits above the input bar on the right, clear of the last message's swipe row; faint until touched */
+'#hb-book-float{position:absolute;right:12px;bottom:calc(100% + 64px);width:40px;height:40px;border-radius:50%;display:grid;place-items:center;box-sizing:border-box;background:rgba(10,21,33,.55);color:#cfe9ff!important;border:1px solid rgba(120,214,255,.35)!important;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);box-shadow:0 2px 10px rgba(0,0,0,.25);opacity:.6;cursor:pointer;z-index:30;font-size:16px;transition:opacity .15s}',
 '#hb-book-float:hover,#hb-book-float:focus-visible{opacity:1}'
 ].join('\n');
 
