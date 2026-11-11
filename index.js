@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.5.0 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.5.1 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.5.0";
+var VERSION = "1.5.1";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -400,7 +400,7 @@ HB.S = (function () {
     });
     return d;
   }
-  return { LISTS: LISTS, ORDER: ORDER, apply: apply, blocks: blocks, hash: hash, text: text, view: view, items: items };
+  return { LISTS: LISTS, ORDER: ORDER, SIGN: SIGN, unsign: unsign, apply: apply, blocks: blocks, hash: hash, text: text, view: view, items: items };
 })();
 
 /* ---------- renderers: each takes parsed lines and returns HTML; missing lines are simply not drawn ---------- */
@@ -875,7 +875,7 @@ function loadStore() {
   var es = ctx.extensionSettings || (ctx.extensionSettings = {});
   var s = es[KEY]; if (!s || typeof s !== 'object') s = es[KEY] = {};
   s.cfg = merge(DEF, s.cfg || {});
-  s.presets = s.presets || {}; s.themes = s.themes || {}; s.chars = s.chars || {};
+  s.presets = s.presets || {}; s.themes = s.themes || {}; s.chars = s.chars || {}; s.worlds = s.worlds || {};
   S = s;
 }
 function save() { try { ctx.saveSettingsDebounced(); } catch (e) {} }
@@ -1086,7 +1086,8 @@ function wantedRegex() {
       disabled: !(LINK.active && CF.adv.strip && CF.status.on), findRegex: '/<status>[\\s\\S]*?<\\/status>\\s*/gi', replaceString: '' })
   ];
 }
-function ensureRegex(force) {
+/* quiet = never reload the chat (used while a reply is about to be generated) */
+function ensureRegex(force, quiet) {
   var es = ctx.extensionSettings, list = es.regex = es.regex || [], changed = false, display = false;
   /* retired: the old-window regex (it replaced old windows with nothing) */
   for (var r = list.length - 1; r >= 0; r--) if (list[r] && list[r].id === 'hb-sw-cleanup') { list.splice(r, 1); changed = true; display = true; }
@@ -1113,7 +1114,7 @@ function ensureRegex(force) {
     if (x && typeof x.scriptName === 'string' && /^HoloBlue · /.test(x.scriptName) && !x.disabled) { x.disabled = true; changed = true; display = true; toast('이전 버전 정규식 "' + x.scriptName + '"을(를) 껐습니다.'); }
   });
   if (changed) save();
-  if ((display || force) && ctx.reloadCurrentChat) { try { ctx.reloadCurrentChat(); } catch (e) {} }
+  if (!quiet && (display || force) && ctx.reloadCurrentChat) { try { ctx.reloadCurrentChat(); } catch (e) {} }
   return changed;
 }
 function removeRegex() {
@@ -1227,7 +1228,7 @@ function process(pre) {
   if (kind === 'status' && mt) {
     order = statusPres(mt, pre).length;
     var vs = viewState(parseInt(id, 10), order);
-    if (vs) raw = { state: vs };
+    if (vs) raw = { state: translated(vs) };
   }
   var host = makeHost(pending ? 'pending' : kind, raw, pending ? {} : { quiet: quiet, wait: !quiet, onPlay: function () { seen.add(key); } });
   if (pending) host.setAttribute('data-hb-pending', '1');
@@ -1265,17 +1266,26 @@ function markOld(pre) {
   pre.setAttribute('data-hb-done', '1'); pre.setAttribute('data-hb-old', '1'); pre.removeAttribute('data-hb-id');
   pre.style.setProperty('display', 'none', 'important'); hideRunnerBtn(pre);
 }
+var OLD_NAME = { status: '상태창', system: '시스템 메시지', noti: '알림', quest: '퀘스트', profile: '인물 창', shop: '상점' };
+function oldBar(pre) {
+  var k = ((pre.textContent.match(/^\s*\[HB:(?:pending\]\s*)?([a-z]+)/i) || [])[1] || '').toLowerCase();
+  var bar = D.createElement('div'); bar.className = 'hb-oldbar'; bar.setAttribute('role', 'button'); bar.tabIndex = 0;
+  bar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span>' + (OLD_NAME[k] || '시스템 창') + '</span>';
+  function flip() { pre.setAttribute('data-hb-open', pre.getAttribute('data-hb-open') === '1' ? '0' : '1'); hideOld(); }
+  bar.addEventListener('click', flip);
+  bar.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
+  return bar;
+}
 function wrapOf(pre) { var p = pre.parentElement; return p && p.classList.contains('TH-render') ? p : null; }
 function hideOld() {
   clearTimeout(depthT);
   depthT = setTimeout(function () {
     D.querySelectorAll('#chat .mes').forEach(function (m) {
-      var bar = m.querySelector('.hb-oldbar');
       if (!isOld(m)) {
         /* young again (a message was deleted): draw its windows */
-        if (bar) bar.remove();
+        m.querySelectorAll('.hb-oldbar').forEach(function (b) { b.remove(); });
         m.querySelectorAll('pre[data-hb-old]').forEach(function (p) {
-          p.removeAttribute('data-hb-old'); p.removeAttribute('data-hb-done'); p.style.removeProperty('display'); showRunnerBtn(p); process(p);
+          p.removeAttribute('data-hb-old'); p.removeAttribute('data-hb-open'); p.removeAttribute('data-hb-done'); p.style.removeProperty('display'); showRunnerBtn(p); process(p);
         });
         return;
       }
@@ -1284,24 +1294,14 @@ function hideOld() {
         var id = h.getAttribute('data-hb-id'), p = id ? m.querySelector('pre[data-hb-id="' + id + '"]') : null;
         h.remove(); if (p) markOld(p);
       });
-      var pres = [].slice.call(m.querySelectorAll('pre[data-hb-old]'));
-      if (!pres.length) { if (bar) bar.remove(); return; }
-      var open = m.getAttribute('data-hb-open') === '1';
-      pres.forEach(function (p) {
+      /* one small bar where each window used to be; tapping it shows that block's code */
+      m.querySelectorAll('pre[data-hb-old]').forEach(function (p) {
+        var at = wrapOf(p) || p, b = at.previousElementSibling, open = p.getAttribute('data-hb-open') === '1';
+        if (!b || !b.classList.contains('hb-oldbar')) { b = oldBar(p); at.parentNode.insertBefore(b, at); }
         p.style.setProperty('display', open ? 'block' : 'none', 'important');
-        var w = wrapOf(p); if (w) w.style.setProperty('display', open ? 'block' : 'none', 'important');
+        if (at !== p) at.style.setProperty('display', open ? 'block' : 'none', 'important');
+        b.classList.toggle('open', open);
       });
-      if (!bar) {
-        bar = D.createElement('div'); bar.className = 'hb-oldbar'; bar.setAttribute('role', 'button'); bar.tabIndex = 0;
-        bar.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg><span></span>';
-        var flip = function () { m.setAttribute('data-hb-open', m.getAttribute('data-hb-open') === '1' ? '0' : '1'); hideOld(); };
-        bar.addEventListener('click', flip);
-        bar.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); flip(); } });
-        var first = wrapOf(pres[0]) || pres[0], mt = m.querySelector('.mes_text');
-        if (mt) mt.insertBefore(bar, mt.firstChild); else first.parentNode.insertBefore(bar, first);
-      }
-      bar.classList.toggle('open', open);
-      bar.querySelector('span').textContent = '시스템 창 ' + pres.length + '개 · ' + (open ? '코드 접기' : '코드 보기');
     });
   }, 60);
 }
@@ -1336,7 +1336,7 @@ function applyAll(opt) {
    A snapshot is trusted while its hash matches, so deleting other messages never disturbs it; editing a message
    recomputes it and everything after it. */
 var SKEY = 'hb_sw', MARK = 'hb_sw_state';
-var ownMemo = new WeakMap(), syncedId = null, saveT = 0;
+var ownMemo = new WeakMap(), syncedId = null, syncedLen = -1, saveT = 0;
 function chatIdOf(c) { return c.chatId || (c.getCurrentChatId && c.getCurrentChatId()) || ''; }
 function isUserMes(m) { return !!(m.is_user || m.user); }
 /* the <status> blocks an AI message carries (remembered until its text changes) */
@@ -1385,10 +1385,11 @@ function syncStates() {
   }
   if (any && legacy && meta) { meta[MARK] = 1; saveMeta(); }
   if (wrote) queueChatSave();
-  syncedId = chatIdOf(c);
+  syncedId = chatIdOf(c); syncedLen = chat.length;
   return st;
 }
-function ensureSynced() { if (syncedId !== chatIdOf(C())) syncStates(); }
+/* drawing needs the snapshots of earlier messages: catch up when the chat or its length changed since the last pass */
+function ensureSynced() { var c = C(); if (syncedId !== chatIdOf(c) || syncedLen !== (c.chat || []).length) syncStates(); }
 /* the state right before message i (the nearest earlier snapshot) */
 function stateBefore(i) {
   var chat = C().chat || [];
@@ -1422,6 +1423,78 @@ function saveCorrection(lines) {
   if (m.swipe_id != null) sn.sw = m.swipe_id;
   syncStates();
   return true;
+}
+/* ---------- translated display ----------
+   A translation extension keeps the translated message in extra.display_text. The totals are computed from the
+   original text, so the windows would show untranslated values. A translated block lines up with its original line
+   by line; from those pairs a small dictionary is built and applied to a state right before it is drawn.
+   Numbers are masked (#) on both sides, so "500円（お小遣い）" -> "#엔 (용돈)" still fits after the amount changes. */
+var NUMS = /\d[\d,]*(?:\.\d+)?/g, trMemo = new WeakMap(), trDict = null, trKey = '';
+function maskNum(s) { return String(s).replace(NUMS, '#'); }
+function learnPair(out, a, b) {
+  a = trimS(a); b = trimS(b);
+  if (!a || !b || a === b) return;
+  var ma = maskNum(a), mb = maskNum(b);
+  if (ma !== mb && ma.split('#').length === mb.split('#').length) out.push([ma, mb]);
+}
+function pairsOf(mes, shown) {
+  var A = HB.S.blocks(mes), B = HB.S.blocks(shown), out = [];
+  if (A.length !== B.length) return out;
+  A.forEach(function (raw, n) {
+    var da = HB.parse(raw)._l, db = HB.parse(B[n])._l;
+    if (da.length !== db.length) return;
+    da.forEach(function (kv, i) {
+      var k = kv[0];
+      if (db[i][0] !== k) return;
+      if (!HB.S.LISTS[k]) { learnPair(out, kv[1], db[i][1]); return; }
+      var ia = HB.S.items(kv[1]), ib = HB.S.items(db[i][1]);
+      if (ia.length !== ib.length) return;
+      ia.forEach(function (it, j) {
+        var a = HB.S.unsign(it), b = HB.S.unsign(ib[j]);
+        if (k === 'fx' || k === 'stat') { learnPair(out, a, b); return; }
+        var fa = HB.fields(a), fb = HB.fields(b);
+        if (fa.length === fb.length) fa.forEach(function (x, q) { learnPair(out, x, fb[q]); });
+      });
+    });
+  });
+  return out;
+}
+function translations() {
+  var c = C(), chat = c.chat || [], miss = false, all = [];
+  for (var i = 0; i < chat.length; i++) {
+    var m = chat[i], shown = m.extra && m.extra.display_text;
+    if (!shown || isUserMes(m)) continue;
+    var memo = trMemo.get(m);
+    if (!memo || memo.mes !== m.mes || memo.shown !== shown) { memo = { mes: m.mes, shown: shown, pairs: pairsOf(m.mes, shown) }; trMemo.set(m, memo); miss = true; }
+    all.push(memo.pairs);
+  }
+  var key = chatIdOf(c) + ':' + chat.length + ':' + all.length;
+  if (!trDict || miss || key !== trKey) {
+    trDict = {}; trKey = key;
+    all.forEach(function (ps) { ps.forEach(function (p) { trDict[p[0]] = p[1]; }); });
+  }
+  return trDict;
+}
+function trText(dict, s) {
+  var t = dict[maskNum(s)];
+  if (!t) return s;
+  var nums = String(s).match(NUMS) || [], i = 0;
+  return t.replace(/#/g, function () { return nums[i++]; });
+}
+/* a copy of the state with every value the chat has a translation for swapped in (drawing only) */
+function translated(st) {
+  var dict = translations(), out = {};
+  if (!Object.keys(dict).length) return st;
+  Object.keys(st).forEach(function (k) {
+    var v = st[k];
+    if (!Array.isArray(v)) { out[k] = trText(dict, v); return; }
+    out[k] = v.map(function (it) {
+      var sg = (it.match(HB.S.SIGN) || [''])[0], body = it.slice(sg.length);
+      if (k === 'fx' || k === 'stat') return sg + trText(dict, body);
+      return sg + HB.fields(body).map(function (f) { return trText(dict, f); }).join('|');
+    });
+  });
+  return out;
 }
 function redrawStatus() { unrender('#chat .hb-host[data-hb="status"]'); scanAll(); }
 
@@ -1537,6 +1610,17 @@ var UI_CSS = [
 '#hbs-ov .hbs-empty{font-size:12.5px;color:var(--dim);padding:14px;border:1px dashed var(--b2);border-radius:10px;text-align:center}',
 '#hbs-ov .hbs-note{font-size:12.5px;color:#7a5a12;background:#fff7e3;border:1px solid #f1dfae;border-radius:8px;padding:8px 12px}',
 '#hbs-ov .hbs-num{width:84px}',
+'#hbs-ov .hbs-wchip{display:inline-flex;align-items:stretch;border:1px solid var(--b2);border-radius:999px;overflow:hidden;background:var(--bg)}',
+'#hbs-ov .hbs-wchip button{border:0!important;background:none;color:var(--tx);font:inherit;font-size:13px;padding:6px 4px 6px 12px;cursor:pointer;margin:0;border-radius:0;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}',
+'#hbs-ov .hbs-wchip button.x{padding:6px 10px 6px 4px;color:var(--dim);font-size:12.5px}',
+'#hbs-ov .hbs-wchip button.x:hover{color:var(--warn)}',
+'#hbs-ov .hbs-wchip[aria-pressed="true"]{background:var(--acs);border-color:var(--ac)}',
+'#hbs-ov .hbs-wchip[aria-pressed="true"] button:first-child{color:var(--ac2);font-weight:600}',
+'#hbs-ov .hbs-chips:empty{display:none}',
+'#hbs-ov .hbs-mini{display:inline-flex;gap:2px;padding:2px;border-radius:8px;background:var(--bg3)}',
+'#hbs-ov .hbs-mini button{border:0!important;background:none;color:var(--dim);font:inherit;font-size:12px;font-weight:600;padding:4px 10px;border-radius:6px;cursor:pointer;margin:0}',
+'#hbs-ov .hbs-mini button[aria-pressed="true"]{background:#fff;color:var(--ac2);box-shadow:0 1px 2px rgba(20,35,55,.18)}',
+'#hbs-ov .hbs-code{margin:0;padding:10px 12px;font:12px/1.6 "JetBrains Mono",ui-monospace,Consolas,monospace;color:#d6ecf8;background:rgba(4,12,22,.55);border:1px solid rgba(120,214,255,.2);white-space:pre-wrap;word-break:break-word;text-align:left;max-height:320px;overflow:auto}',
 '#hbs-ov .hbs-stgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 12px}',
 '#hbs-ov .hbs-ta.hbs-stlist{min-height:0;font-size:13px;line-height:1.7;white-space:pre;overflow-x:auto}',
 '#hbs-ov .hbs-guide{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--tx);line-height:1.6}',
@@ -1667,6 +1751,13 @@ function presetSummary(p) {
 var STATE_LABEL = { date: '날짜', time: '시간', loc: '장소', weather: '날씨', name: '이름', lv: '레벨', rank: '랭크', role: '직업 · 신분', title: '장착 칭호', titles: '보유 칭호', exp: '경험치',
   hp: 'HP', mp: 'MP', fat: '피로도', fx: '버프 · 디버프', quest: '진행 중 퀘스트', money: '소지금', point: '포인트', sp: '잔여 스탯 포인트', stat: '능력치', inv: '인벤토리', skill: '스킬' };
 var STATE_HINT = { fx: '+버프 (남은 시간) / -디버프', quest: '이름|남은 시간', titles: '칭호|효과', stat: '이름 수치 등급', inv: '이름|희귀도|수량', skill: '이름|레벨|종류|비용|효과' };
+function worldChips(c) {
+  var ks = Object.keys(S.worlds);
+  return '<div class="hbs-chips">' + ks.map(function (k) {
+    return '<span class="hbs-wchip" aria-pressed="' + (S.worlds[k] === c.world) + '"><button type="button" data-act="w-use" data-id="' + h(k) + '">' + h(k) + '</button><button type="button" class="x" data-act="w-del" data-id="' + h(k) + '" aria-label="삭제">×</button></span>';
+  }).join('') + '</div>' +
+    '<div class="hbs-line nowrap"><input class="hbs-in" id="hbs-wname" placeholder="이 내용의 이름"><button type="button" class="hbs-btn" data-act="w-save">세계관 저장</button></div>';
+}
 var PANELS = {
   main: function (c) {
     var keys = Object.keys(S.presets), f = c.status.fields;
@@ -1689,9 +1780,9 @@ var PANELS = {
           ? '<textarea class="hbs-ta" style="min-height:64px" data-k="personaCustom" placeholder="예: 존댓말을 쓰지만 은근히 사용자를 깔본다. 가끔 혼잣말을 흘린다.">' + h(c.personaCustom) + '</textarea>'
           : '<p class="hbs-help">' + h(p[1]) + '</p>') + '</div>' +
       '<div class="hbs-f"><label for="hbs-world" style="display:flex">세계관 · 작가 노트<span class="hbs-cnt" id="hbs-wc"></span></label>' +
-        '<textarea id="hbs-world" class="hbs-ta" data-k="world" maxlength="1200" placeholder="이 시스템이 어떤 이야기에 속하는지 짧게 적습니다. 비워 두면 봇 설정을 그대로 따릅니다. {{user}}, {{char}}를 쓸 수 있습니다.">' + h(c.world) + '</textarea></div></div>' +
+        '<textarea id="hbs-world" class="hbs-ta" data-k="world" maxlength="1200" placeholder="이 시스템이 어떤 이야기에 속하는지 짧게 적습니다. 비워 두면 봇 설정을 그대로 따릅니다. {{user}}, {{char}}를 쓸 수 있습니다.">' + h(c.world) + '</textarea>' + worldChips(c) + '</div></div>' +
     /* status window */
-    '<div class="hbs-sec"><h3>기본 상태창</h3><div class="hbs-card' + (c.status.on ? '' : ' off') + '">' + row('status.on', '상태창', '모든 AI 응답의 맨 위에 붙습니다.') +
+    '<div class="hbs-sec"><h3>기본 상태창<span class="hbs-sp"></span><span class="hbs-mini" role="group" aria-label="미리보기"><button type="button" data-prevmode="design" aria-pressed="' + (ui.prevMode !== 'code') + '">디자인</button><button type="button" data-prevmode="code" aria-pressed="' + (ui.prevMode === 'code') + '">코드</button></span></h3><div class="hbs-card' + (c.status.on ? '' : ' off') + '">' + row('status.on', '상태창', '모든 AI 응답의 맨 위에 붙습니다.') +
       (c.status.on ? '<div class="hbs-opt">' +
         '<div class="hbs-f"><span class="l">성장 표시</span><div class="hbs-chips">' + chip('status.grow', 'lv', '레벨 · 경험치') + chip('status.grow', 'rank', '랭크 · 진행도') + '</div></div>' +
         acc('fields', '표시할 항목', picked.length + '개 · ' + picked.join(', '),
@@ -1810,6 +1901,8 @@ function drawPreviews(body, c) {
     if (k === 'system') { var st = ui.sysPrev || 'notice'; raw = SAMPLE.sys[st === 'levelup' && c.status.grow === 'rank' ? 'rankup' : st]; }
     el.innerHTML = '';
     if (k === 'status' && !raw) { el.innerHTML = '<div class="hbs-empty" style="background:#fff">표시할 항목을 하나 이상 고르세요.</div>'; return; }
+    /* code view: the block exactly as the AI writes it */
+    if (ui.prevMode === 'code') { var pc = D.createElement('pre'); pc.className = 'hbs-code'; pc.textContent = '<' + k + '>\n' + raw + '\n</' + k + '>'; el.appendChild(pc); return; }
     el.appendChild(makeHost(k, raw, { quiet: true, preview: true }));
   });
   body.querySelectorAll('[data-pv]').forEach(function (el) {
@@ -1869,6 +1962,18 @@ var ACTIONS = {
   'ps-exp': function () { download('system-window-presets.json', new Blob([JSON.stringify({ hb_system_window: 2, presets: S.presets, current: CF }, null, 2)], { type: 'application/json' })); },
   'ps-imp': function () { var f = ui.el.querySelector('#hbs-jfile'); f.value = ''; f.click(); },
   'unlink-char': function () { unlinkChar(); commit(true); },
+  /* world notes kept by name: tap one to swap it in */
+  'w-save': function () {
+    var inp = ui.el.querySelector('#hbs-wname'), n = trimS(inp.value);
+    if (!trimS(CF.world)) { toast('저장할 내용이 없습니다.', 'warning'); return; }
+    if (!n) { toast('이름을 적어 주세요.', 'warning'); inp.focus(); return; }
+    S.worlds[n] = CF.world; ui.anchor = '#hbs-wname'; commit(true);
+  },
+  'w-use': function (b) { CF.world = S.worlds[b.dataset.id] || ''; ui.anchor = '#hbs-world'; commit(true); },
+  'w-del': function (b) {
+    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '삭제?'; return; }
+    delete S.worlds[b.dataset.id]; ui.anchor = '#hbs-world'; commit(true);
+  },
   'st-reset': function () { ui.dirty = false; paint(); },
   /* only the values that differ from the tracked state are stored, as corrections on the last message */
   'st-save': function () {
@@ -1937,6 +2042,8 @@ function openSettings() {
   body.addEventListener('click', function (e) {
     var ac = e.target.closest('[data-acc]');
     if (ac) { var open = ac.getAttribute('aria-expanded') !== 'true'; ui.acc[ac.dataset.acc] = open; ac.setAttribute('aria-expanded', open); ac.nextElementSibling.hidden = !open; return; }
+    var pm = e.target.closest('[data-prevmode]');
+    if (pm) { ui.prevMode = pm.dataset.prevmode; ui.anchor = '[data-prevmode="' + ui.prevMode + '"]'; paint(); return; }
     var sp = e.target.closest('[data-sysprev]');
     if (sp) {
       ui.sysPrev = sp.dataset.sysprev;
@@ -2057,7 +2164,8 @@ function start() {
   if (chat) obs.observe(chat, { childList: true, subtree: true });
   /* each chat can have its own link and settings */
   on('CHAT_CHANGED', function () { applyAll(); setTimeout(scanAll, 60); if (ui.el) paint(); });
-  on('GENERATION_STARTED', applyPrompt);
+  /* right before a reply is generated: the totals and the prompt-only regex must match this chat */
+  on('GENERATION_STARTED', function (type) { applyPrompt(type); ensureRegex(false, true); });
   /* the chat's content changed: bring the status totals up to date, then whatever shows them */
   function stateChanged(redraw) {
     return function () {
