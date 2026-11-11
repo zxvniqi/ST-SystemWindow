@@ -2510,7 +2510,7 @@ var PANELS = {
   design: function (c) {
     return '<div class="hbs-sec"><h3>테마 · 커스텀 팩 <small>지금 연결된 설정에 적용됩니다</small></h3><div class="hbs-themes">' + themeList().map(function (t) {
       var on = c.theme === t.id;
-      return '<div class="hbs-th' + (on ? ' on' : '') + '"><div class="pv" data-pv="' + h(t.id) + '"></div><div class="mt"><b>' + h(t.name) + (t.builtin ? '<span class="hbs-tag">기본</span>' : '') + (t.pack ? '<span class="hbs-tag">팩</span>' : '') + (on ? '<span class="hbs-tag">사용 중</span>' : '') + '</b>' +
+      return '<div class="hbs-th' + (on ? ' on' : '') + '"><div class="pv" data-pv="' + h(t.id) + '"></div><div class="mt"><b>' + h(t.name) + (t.builtin ? '<span class="hbs-tag">기본</span>' : '') + (t.pack ? '<span class="hbs-tag">커스텀</span>' : '') + (on ? '<span class="hbs-tag">사용 중</span>' : '') + '</b>' +
         '<span>' + h(t.description || (t.author ? '제작: ' + t.author : '')) + '</span></div><div class="ac">' +
         '<button type="button" class="hbs-btn sm' + (on ? '' : ' pri') + '" data-act="th-use" data-id="' + h(t.id) + '"' + (on ? ' disabled' : '') + '>' + (on ? '적용됨' : '적용') + '</button>' +
         '<button type="button" class="hbs-btn sm" data-act="th-exp" data-id="' + h(t.id) + '">zip 내보내기</button>' +
