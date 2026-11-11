@@ -1,8 +1,8 @@
-/* 시스템 상태창 (System Window) v1.5.1 — SillyTavern 확장
+/* 시스템 상태창 (System Window) v1.5.2 — SillyTavern 확장
    설정: 마법봉 메뉴 > 시스템 상태창 */
 (function () {
 "use strict";
-var VERSION = "1.5.1";
+var VERSION = "1.5.2";
 var IS_EXT = true;
 var P = window; try { if (window.parent && window.parent !== window && window.parent.document && window.parent.SillyTavern) P = window.parent; } catch (e) {}
 var D = P.document;
@@ -986,11 +986,11 @@ function statusPrompt(c, W, st) {
   var OPTIONAL = { role: 1, title: 1, titles: 1, fx: 1, quest: 1, inv: 1, skill: 1 };
   var tail = [];
   if (f.stat) tail.push('n = value, G = grade.');
-  if (f.inv) tail.push('inv holds items carried or wielded, never clothing. Rarity: ' + W.rar + '.');
+  if (f.inv) tail.push('inv: carried or wielded items only, no clothing. Rarity: ' + W.rar + '.');
   var mid = ['date', 'time', 'loc', 'weather'].some(function (k) { return f[k]; })
-    ? 'Only for a time skip of an hour or more, or a move to another place, partway through the reply: add one more <status> right there with the lines that changed. At most one per reply.' : '';
+    ? 'Mid-reply, only for a time skip of 1h+ or a change of place: one more <status> right there with the changed lines (at most one).' : '';
   if (keys.every(function (k) { return !(k in st); })) {
-    return '[Status Window]\nNo status exists yet. Begin this reply with the full block, before any narrative or other block; drop lines that don\'t apply:\n<status>\n' +
+    return '[Status Window]\nNo status exists yet. Open this reply with the full block, before anything else (omit lines that don\'t apply):\n<status>\n' +
       keys.map(function (k) { return FULL[k]; }).join('\n') + '\n</status>' + (tail.length ? '\n' + tail.join(' ') : '');
   }
   var ex = [];
@@ -1000,24 +1000,24 @@ function statusPrompt(c, W, st) {
   if (!ex.length) ex.push(keys[0] + ': new value');
   var how = [], plain = ['date', 'time', 'loc', 'weather', 'name', 'role', 'title'].filter(function (k) { return f[k]; });
   var gauges = ['hp', 'mp'].filter(function (k) { return f[k]; }), counts = ['money', 'point', 'sp'].filter(function (k) { return f[k]; });
-  if (plain.length) how.push(plain.join(', ') + ': the new value, in the same form as in [Current Status]');
-  if (f.lv) how.push(rank ? 'rank: the new grade' + (f.exp ? ', together with exp: 0%' : '') : 'lv: +1 on a level-up' + (f.exp ? ', together with exp: cur/max for the new level' : ''));
-  if (gauges.length) how.push(gauges.join(', ') + ': +n or -n; cur/max only when the maximum itself changes');
-  if (f.fat) how.push('fat: +n or -n');
-  if (f.exp) how.push('exp: +n' + (rank ? ' (percent toward the next rank)' : ''));
-  if (counts.length) how.push(counts.join(', ') + ': +n or -n');
-  if (f.fx) how.push('fx: the whole current list whenever it changes, as "+buff (time left); -debuff (time left)"; "fx: none" when nothing is left');
-  if (f.stat) how.push('stat: only the ones that changed, as "name +n" or "name n G"');
-  if (f.inv) how.push('inv: "+item|rarity|qty" for something gained, "-item|qty" for something lost or used up');
-  if (f.skill) how.push('skill: "+name|level|active or passive|cost or cooldown|effect" when learned, "name|new level" when it levels up, "-name" when lost');
-  if (f.title) how.push('titles: "+title|effect" when one is earned');
-  if (f.quest) how.push('quest: "+name|time left" when accepted, "name|progress" when it moves on, "-name" when it ends');
+  if (plain.length) how.push(plain.join(', ') + ': new value, same form as in [Current Status]');
+  if (f.lv) how.push(rank ? 'rank: new grade' + (f.exp ? ', with exp: 0%' : '') : 'lv: +1 on level-up' + (f.exp ? ', with exp: cur/max for the new level' : ''));
+  if (gauges.length) how.push(gauges.join(', ') + ': +n / -n (cur/max only if the maximum changes)');
+  if (f.fat) how.push('fat: +n / -n');
+  if (f.exp) how.push('exp: +n' + (rank ? ' (% toward the next rank)' : ''));
+  if (counts.length) how.push(counts.join(', ') + ': +n / -n');
+  if (f.fx) how.push('fx: the full current list on any change, "+buff (time left); -debuff (time left)"; "fx: none" if empty');
+  if (f.stat) how.push('stat: changed ones only, "name +n" or "name n G"');
+  if (f.inv) how.push('inv: "+item|rarity|qty" gained, "-item|qty" lost or used');
+  if (f.skill) how.push('skill: "+name|level|active or passive|cost or cooldown|effect" learned, "name|new level" on level-up, "-name" lost');
+  if (f.title) how.push('titles: "+title|effect" earned');
+  if (f.quest) how.push('quest: "+name|time left" accepted, "name|progress" updated, "-name" ended');
   var missing = keys.filter(function (k) { return !(k in st) && !OPTIONAL[k]; });
-  return '[Status Window]\nThe System keeps {{user}}\'s status. [Current Status] below is exact and already includes everything so far. ' +
-    'Begin every reply with a <status> block, before any narrative or other block, holding only the lines this reply changes:\n<status>\n' + ex.join('\n') + '\n</status>\n' +
-    'Never repeat unchanged lines and never do the arithmetic; the System adds it up. How to write a change:\n- ' + how.join('\n- ') +
+  return '[Status Window]\nThe System tracks {{user}}\'s status; [Current Status] below is exact and up to date. ' +
+    'Open every reply with a <status> block, before anything else, holding only the lines this reply changes:\n<status>\n' + ex.join('\n') + '\n</status>\n' +
+    'Don\'t repeat unchanged lines or do the math; the System totals it.\n- ' + how.join('\n- ') +
     (tail.length ? '\n' + tail.join(' ') : '') + (mid ? '\n' + mid : '') +
-    (missing.length ? '\nNot tracked yet, so this time also write in full: ' + missing.map(function (k) { return FULL[k]; }).join(' / ') : '') +
+    (missing.length ? '\nNot tracked yet, write in full this time: ' + missing.map(function (k) { return FULL[k]; }).join(' / ') : '') +
     '\n[Current Status]\n' + HB.S.text(st, keys);
 }
 function buildPrompt(c, st) {
@@ -1026,11 +1026,11 @@ function buildPrompt(c, st) {
   if (!any) return '';
   var rank = c.status.grow === 'rank';
   var usesGrade = (c.status.on && (f.stat || (rank && f.lv))) || c.profile.on || c.quest.on;
-  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Show System windows as tagged blocks, using only the formats given, each placed at the point in the story where it happens. ' +
-    'One "key: value" per line; drop lines that don\'t apply. Lists: ";" between items, "|" between fields. Keep keys in English; write values in ' + W.lang + '.';
+  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Its windows are tagged blocks in the formats below, each placed where it happens in the story. ' +
+    'One "key: value" per line; omit lines that don\'t apply. ";" separates list items, "|" separates fields. Keys stay in English; values in ' + W.lang + '.';
   if (usesGrade) rules += '\nGrades: F feeble < E < D < C average adult < B < A elite human < S superhuman < SS legendary < SSS; +/- allowed.';
   /* restraint without numbers: windows appear only where the story naturally calls for them */
-  rules += '\nShow a window only when the moment naturally calls for it; the prose carries the story. ' + (c.status.on ? 'Many replies need nothing beyond the status block.' : 'Many replies need no window at all.');
+  rules += '\nUse a window only when the moment naturally calls for it; the prose carries the story. ' + (c.status.on ? 'Many replies need only the status block.' : 'Many replies need no window.');
   var per = c.persona === 'custom' ? trimS(c.personaCustom) : (PERSONA[c.persona] || PERSONA.neutral)[2];
   if (per) rules += '\nSystem personality: ' + per + '.';
   out.push(rules);
@@ -1040,22 +1040,22 @@ function buildPrompt(c, st) {
   if (sp) out.push(sp);
   if (c.system.on || c.noti.on) {
     var sm = '';
-    if (c.system.on) sm += '[System Messages]\nOnly when the System truly speaks up (answering {{user}}, a real warning, a major event), not for every small reaction:\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line\n</system>\n' +
-      'text alone is fine; add sub only when there is more to say. talk = answering {{user}}; warn = danger or deadline; error = malfunction or forbidden truth (hide words with ███, optional "log: action|OK or FAIL" lines); levelup text = ' +
+    if (c.system.on) sm += '[System Messages]\nOnly when the System truly speaks up (answering {{user}}, a real warning, a major event), not for small reactions:\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line, only if needed\n</system>\n' +
+      'talk = answering {{user}}; warn = danger or deadline; error = malfunction or forbidden truth (hide words with ███; optional "log: action|OK or FAIL" lines); levelup text = ' +
       (c.status.grow === 'rank' ? '"RANK a → b"' : '"LV.a → LV.b"') + '.';
-    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Notable gains or changes go in a block' + (c.system.on ? ' instead' : '') + ', a line each; skip trivial ones:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
+    if (c.noti.on) sm += (sm ? '\n' : '[System Notifications]\n') + 'Notable gains or changes go in a block' + (c.system.on ? ' instead' : '') + ', one per line; skip trivial ones:\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change\n</noti>';
     out.push(sm);
   }
   if (c.quest.on) out.push('[Quest Window]\nOnly when the System issues a quest at a real turning point:\n<quest>\ntype: ' + W.qtype + '\ntitle: quest name\ndesc: situation, 1-2 sentences\ntime: HH:MM:SS left|% of time left\n' +
-    'goal: objective cur/max; ...\nreward: ...; ...\npenalty: ...; ...\n</quest>\nGoals are things still to be done when the quest is issued: each starts at 0. For progress, repeat the block with "state: active". When it ends: <quest> with state: clear or fail, grade, title, and only the reward (clear) or penalty (fail) actually applied.');
+    'goal: objective cur/max; ...\nreward: ...; ...\npenalty: ...; ...\n</quest>\nGoals are not yet done at issue: each starts at 0. Progress: repeat the block with "state: active". End: <quest> with state: clear or fail, grade, title, and only the reward or penalty actually applied.');
   if (c.profile.on) {
     var ps = names(c.profile.stats).map(function (n) { return n + ' G'; });
     if (c.profile.uniq) ps.push('*unique G');
-    var p = '[Profile Window]\nOnce per person, when {{user}} first meets, studies or scans a notable person (again only if much more is revealed):\n<profile>\nname: name\nrank: overall grade\n' +
+    var p = '[Profile Window]\nOnce per notable person, when {{user}} first meets, studies or scans them (again only if much more is revealed):\n<profile>\nname: name\nrank: overall grade\n' +
       'info: age · job · affiliation\ntag: trait; trait (prefix ! for a warning sign)' + (ps.length ? '\nstat: ' + ps.join('; ') : '') +
       (c.profile.aff ? '\naff: affection 0-100|their feeling toward {{user}} in one word' : '') + (c.profile.mind ? '\nmind: their current inner thought, one sentence' : '') + '\n</profile>\n' +
-      (c.profile.uniq ? 'Add 1-2 stats unique to the person, name prefixed with *. ' : '') + 'Write ? for anything {{user}} cannot know yet.' +
-      (c.profile.mind ? ' If mind is ?, add "lock: what would reveal it".' : '');
+      (c.profile.uniq ? '1-2 stats unique to the person get a * prefix. ' : '') + 'Write ? for what {{user}} cannot know yet' +
+      (c.profile.mind ? '; if mind is ?, add "lock: what would reveal it".' : '.');
     out.push(p);
   }
   if (c.shop.on) out.push('[Shop Window]\nOnly when {{user}} opens the shop:\n<shop>\npoint: balance\nitem: name|rarity|price|effect|stock or unlock condition\nrefresh: time until restock\n</shop>\n3-6 item lines. Prefix ! to a locked item\'s name. Rarity: ' + W.rar + '.');
@@ -1610,6 +1610,13 @@ var UI_CSS = [
 '#hbs-ov .hbs-empty{font-size:12.5px;color:var(--dim);padding:14px;border:1px dashed var(--b2);border-radius:10px;text-align:center}',
 '#hbs-ov .hbs-note{font-size:12.5px;color:#7a5a12;background:#fff7e3;border:1px solid #f1dfae;border-radius:8px;padding:8px 12px}',
 '#hbs-ov .hbs-num{width:84px}',
+'#hbs-ov .hbs{position:relative}',
+'#hbs-ov .hbs-ask{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;padding:20px;background:rgba(15,23,32,.45)}',
+'#hbs-ov .hbs-ask>div{width:min(340px,100%);background:#fff;border-radius:12px;padding:18px 18px 14px;box-shadow:0 16px 40px rgba(10,20,35,.3);display:flex;flex-direction:column;gap:14px}',
+'#hbs-ov .hbs-ask p{margin:0;font-size:14px;font-weight:500;color:var(--tx);line-height:1.6;word-break:keep-all}',
+'#hbs-ov .hbs-ask .hbs-line{justify-content:flex-end}',
+'#hbs-ov .hbs-btn.dngp{background:var(--warn);border-color:var(--warn)!important}',
+'#hbs-ov .hbs-btn.dngp:hover{background:#b82a44;border-color:#b82a44!important;color:#fff}',
 '#hbs-ov .hbs-wchip{display:inline-flex;align-items:stretch;border:1px solid var(--b2);border-radius:999px;overflow:hidden;background:var(--bg)}',
 '#hbs-ov .hbs-wchip button{border:0!important;background:none;color:var(--tx);font:inherit;font-size:13px;padding:6px 4px 6px 12px;cursor:pointer;margin:0;border-radius:0;white-space:nowrap;max-width:200px;overflow:hidden;text-overflow:ellipsis}',
 '#hbs-ov .hbs-wchip button.x{padding:6px 10px 6px 4px;color:var(--dim);font-size:12.5px}',
@@ -1934,6 +1941,19 @@ function commit(repaint) {
   }
   if (repaint) paint();
 }
+/* a small confirm box inside the settings window; resolves true when the user agrees */
+function ask(msg, okLabel) {
+  return new Promise(function (done) {
+    var box = ui.el && ui.el.querySelector('.hbs');
+    if (!box) { done(false); return; }
+    var bg = D.createElement('div'); bg.className = 'hbs-ask';
+    bg.innerHTML = '<div role="alertdialog" aria-modal="true"><p>' + h(msg) + '</p><div class="hbs-line"><button type="button" class="hbs-btn" data-a="0">취소</button><button type="button" class="hbs-btn pri dngp" data-a="1">' + h(okLabel) + '</button></div></div>';
+    function close(v) { bg.remove(); done(v); }
+    bg.addEventListener('click', function (e) { var a = e.target.closest('[data-a]'); if (a) close(a.dataset.a === '1'); else if (e.target === bg) close(false); });
+    bg.addEventListener('keydown', function (e) { if (e.key === 'Escape') { e.stopPropagation(); close(false); } });
+    box.appendChild(bg); bg.querySelector('[data-a="0"]').focus();
+  });
+}
 var ACTIONS = {
   fset: function (b) { var set = FIELD_SETS[b.dataset.v], f = CF.status.fields; Object.keys(f).forEach(function (k) { f[k] = set.indexOf(k) > -1 ? 1 : 0; }); commit(true); },
   'th-use': function (b) { CF.theme = b.dataset.id; commit(true); },
@@ -1941,8 +1961,7 @@ var ACTIONS = {
   'th-del': function (b) {
     var id = b.dataset.id, dep = Object.keys(S.themes).filter(function (k) { return S.themes[k].extends === id; });
     if (dep.length) { toast('"' + S.themes[dep[0]].name + '" 테마가 이 테마를 바탕으로 씁니다. 먼저 그 테마를 삭제하세요.', 'warning'); return; }
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 눌러 삭제'; return; }
-    delete S.themes[id]; if (CF.theme === id) CF.theme = 'holo-blue'; commit(true);
+    ask('"' + getTheme(id).name + '" 테마를 삭제하시겠습니까?', '삭제').then(function (ok) { if (!ok) return; delete S.themes[id]; if (CF.theme === id) CF.theme = 'holo-blue'; commit(true); });
   },
   'th-imp': function () { var f = ui.el.querySelector('#hbs-file'); f.value = ''; f.click(); },
   'ps-save': function () {
@@ -1952,12 +1971,12 @@ var ACTIONS = {
   },
   'ps-load': function (b) { setCur(clone(S.presets[b.dataset.id])); commit(true); toast('프리셋 "' + b.dataset.id + '"을(를) 적용했습니다.', 'success'); },
   'ps-over': function (b) {
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 눌러 덮어쓰기'; return; }
-    S.presets[b.dataset.id] = clone(CF); commit(true); toast('프리셋 "' + b.dataset.id + '"에 지금 설정을 덮어썼습니다.', 'success');
+    var id = b.dataset.id;
+    ask('"' + id + '" 프리셋을 지금 설정으로 덮어쓰시겠습니까?', '덮어쓰기').then(function (ok) { if (!ok) return; S.presets[id] = clone(CF); commit(true); toast('프리셋 "' + id + '"에 지금 설정을 덮어썼습니다.', 'success'); });
   },
   'ps-del': function (b) {
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 눌러 삭제'; return; }
-    delete S.presets[b.dataset.id]; commit(true);
+    var id = b.dataset.id;
+    ask('"' + id + '" 프리셋을 삭제하시겠습니까?', '삭제').then(function (ok) { if (!ok) return; delete S.presets[id]; commit(true); });
   },
   'ps-exp': function () { download('system-window-presets.json', new Blob([JSON.stringify({ hb_system_window: 2, presets: S.presets, current: CF }, null, 2)], { type: 'application/json' })); },
   'ps-imp': function () { var f = ui.el.querySelector('#hbs-jfile'); f.value = ''; f.click(); },
@@ -1971,8 +1990,8 @@ var ACTIONS = {
   },
   'w-use': function (b) { CF.world = S.worlds[b.dataset.id] || ''; ui.anchor = '#hbs-world'; commit(true); },
   'w-del': function (b) {
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '삭제?'; return; }
-    delete S.worlds[b.dataset.id]; ui.anchor = '#hbs-world'; commit(true);
+    var id = b.dataset.id;
+    ask('"' + id + '" 세계관을 삭제하시겠습니까?', '삭제').then(function (ok) { if (!ok) return; delete S.worlds[id]; ui.anchor = '#hbs-world'; commit(true); });
   },
   'st-reset': function () { ui.dirty = false; paint(); },
   /* only the values that differ from the tracked state are stored, as corrections on the last message */
@@ -2005,8 +2024,7 @@ var ACTIONS = {
   },
   'rx-fix': function () { removeRegex(); ensureRegex(true); toast('정규식을 다시 설치했습니다.', 'success'); },
   reset: function (b) {
-    if (b.dataset.sure !== '1') { b.dataset.sure = '1'; b.textContent = '한 번 더 눌러 초기화 (프리셋과 테마는 남습니다)'; return; }
-    setCur(clone(DEF)); commit(true);
+    ask('이 설정을 처음 상태로 되돌리시겠습니까? 프리셋과 테마는 남습니다.', '초기화').then(function (ok) { if (ok) { setCur(clone(DEF)); commit(true); } });
   }
 };
 function openSettings() {
