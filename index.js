@@ -2268,7 +2268,7 @@ UI_CSS += '\n' + [
 '#hbn-ov .hbn-hd{display:flex;align-items:center;gap:6px;padding:10px 10px 10px 16px;border-bottom:1px solid rgba(120,214,255,.16)}',
 '#hbn-ov .hbn-hd h2{margin:0 8px 0 0;font-size:15px;font-weight:700;color:#eaf6ff;letter-spacing:0}',
 '#hbn-ov .hbn-tab{border:0!important;background:none;color:#8aa3b6;font:inherit;font-size:13.5px;font-weight:600;padding:6px 10px;border-radius:8px;cursor:pointer;margin:0}',
-'#hbn-ov .hbn-tab small{font-size:11.5px;margin-left:3px;opacity:.75}',
+'#hbn-ov .hbn-tab small{font-size:11.5px;margin-left:3px;opacity:.75;color:inherit!important}',
 '#hbn-ov .hbn-tab[aria-selected="true"]{background:rgba(120,214,255,.14);color:#8fe9ff}',
 '#hbn-ov .hbn-sp{flex:1}',
 '#hbn-ov .hbn-x{width:32px;height:32px;display:grid;place-items:center;border:0!important;border-radius:8px;background:none;color:#8aa3b6;cursor:pointer;font-size:20px;line-height:1;padding:0;margin:0}',
