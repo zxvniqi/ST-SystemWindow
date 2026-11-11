@@ -999,7 +999,7 @@ function statusPrompt(c, W, st) {
   if (f.stat) tail.push('n = value, G = grade.');
   if (f.inv) tail.push('inv: carried or wielded items only, no clothing. Rarity: ' + W.rar + '.');
   var mid = ['date', 'time', 'loc', 'weather'].some(function (k) { return f[k]; })
-    ? 'Mid-reply, only for a time skip of 1h+ or a change of place: one more <status> right there with the changed lines (at most one).' : '';
+    ? 'Mid-reply, only when a full day or more passes within this reply: another <status> right there with the changed lines.' : '';
   if (keys.every(function (k) { return !(k in st); })) {
     return '[Status Window]\nNo status exists yet. Open this reply with the full block, before anything else (omit lines that don\'t apply):\n<status>\n' +
       keys.map(function (k) { return FULL[k]; }).join('\n') + '\n</status>' + (tail.length ? '\n' + tail.join(' ') : '');
@@ -1062,7 +1062,8 @@ function buildPrompt(c, st) {
   if (c.profile.on) {
     var ps = names(c.profile.stats).map(function (n) { return n + ' G'; });
     if (c.profile.uniq) ps.push('*unique G');
-    var p = '[Profile Window]\nOnce per notable person, when {{user}} first meets, studies or scans them (again only if much more is revealed):\n<profile>\nname: name\nrank: overall grade\n' +
+    var p = '[Profile Window]\nWhen {{user}} first meets a notable person. After that, only when {{user}} asks to see it, or when a major story turn reveals or changes a lot about them (true identity, a big rank change, turning against {{user}})' +
+      (c.noti.on ? '; small shifts in affection or a stat go in <noti> instead, as "aff: name affection|+n" or "stat: name stat|new grade"' : '') + ':\n<profile>\nname: name\nrank: overall grade\n' +
       'info: age · job · affiliation\ntag: trait; trait (prefix ! for a warning sign)' + (ps.length ? '\nstat: ' + ps.join('; ') : '') +
       (c.profile.aff ? '\naff: affection 0-100|their feeling toward {{user}} in one word' : '') + (c.profile.mind ? '\nmind: their current inner thought, one sentence' : '') + '\n</profile>\n' +
       (c.profile.uniq ? '1-2 stats unique to the person get a * prefix. ' : '') + 'Write ? for what {{user}} cannot know yet' +
@@ -2293,35 +2294,95 @@ UI_CSS += '\n' + [
 ].join('\n');
 
 var book = { el: null, tab: 'npc', who: null };
-function tagBlocks(mes, tag) {
-  var out = [], re = new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>', 'gi'), m;
-  if (!mes || !re.test(mes)) return out;
-  re.lastIndex = 0;
-  while ((m = re.exec(mes))) out.push(m[1]);
+/* the profile, notification and shop blocks of a text, in the order they were written */
+function bookBlocks(text) {
+  var out = [], re = /<(profile|noti|shop)>([\s\S]*?)<\/\1>/gi, m;
+  if (!text) return out;
+  while ((m = re.exec(text))) out.push([m[1].toLowerCase(), m[2]]);
   return out;
 }
-/* the translated copy of a message's blocks when the translation keeps them all, else the originals */
-function shownBlocks(m, tag) {
-  var raw = tagBlocks(m.mes, tag), shown = m.extra && m.extra.display_text ? tagBlocks(m.extra.display_text, tag) : [];
-  return { raw: raw, shown: shown.length === raw.length ? shown : raw };
+function bookKey(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
+function bookText(d) { return d._l.map(function (kv) { return kv[0] + ': ' + kv[1]; }).join('\n'); }
+/* "근력 B" / "*관찰력 40" / "민첩 ?" -> { name, last } (last = the grade or number at the end, '' if none) */
+function statTok(it) {
+  var t = trimS(it).split(/\s+/), last = t.length > 1 ? t.pop() : '';
+  return { name: t.join(' ').replace(/^[*＊]\s*/, ''), last: last };
+}
+/* the new end token of a stat after a change, or null when the change cannot be read safely */
+function statNext(last, ch) {
+  var tk = ch.split(/\s+|→|->|>/).filter(Boolean), end = tk[tk.length - 1] || '', sg;
+  if (HB.grade(last)) return HB.grade(end) ? end.toUpperCase() : null;
+  if (!/^\d+$/.test(last)) return null;                     /* locked (?) or no value: leave it */
+  if ((sg = ch.match(/^\s*([+\-−＋－])\s*(\d+)/))) return String(Math.max(0, parseInt(last, 10) + parseInt(sg[2], 10) * (/[+＋]/.test(sg[1]) ? 1 : -1)));
+  return /^\d+$/.test(end) ? end : null;
+}
+/* one "stat" line again, so a single item can be changed in place */
+function statItems(d) {
+  var its = HB.all(d, 'stat'), at = -1;
+  d._l = d._l.filter(function (kv, i) { if (kv[0] !== 'stat') return true; if (at < 0) at = i; return false; });
+  return { its: its, put: function () { if (at > -1) d._l.splice(at, 0, ['stat', its.join('; ')]); d.stat = [its.join('; ')]; } };
+}
+/* a <noti> "aff" or "stat" line about someone already in the notebook updates their latest profile.
+   Anything that cannot be matched without guessing (no name, two names, an unknown stat, a locked value) is skipped. */
+function bookNoti(people, raw, at) {
+  HB.parse(raw)._l.forEach(function (kv) {
+    if (kv[0] !== 'aff' && kv[0] !== 'stat') return;
+    var f = HB.fields(kv[1]), what = bookKey(f[0]), ch = trimS(f[1] || ''), who = null, len = 0, tie = false;
+    if (!what || !ch) return;
+    Object.keys(people).forEach(function (k) {
+      if (what.indexOf(k) < 0) return;
+      if (k.length > len) { who = people[k]; len = k.length; tie = false; } else if (k.length === len) tie = true;
+    });
+    if (!who || tie) return;
+    if (kv[0] === 'aff') {
+      var a = HB.fields(HB.one(who.d, 'aff')), n = parseInt(a[0], 10), sg = ch.match(/^\s*([+\-−＋－])\s*(\d+)/), v;
+      if (isNaN(n) || !/^\d+$/.test(trimS(a[0]))) return;   /* locked or unknown affection stays as it is */
+      if (sg) v = n + parseInt(sg[2], 10) * (/[+＋]/.test(sg[1]) ? 1 : -1);
+      else if (/^\d+$/.test(ch)) v = parseInt(ch, 10);
+      else return;
+      v = String(Math.max(0, Math.min(100, v)));
+      [who.d, who.s].forEach(function (d) {
+        d._l.forEach(function (x) { if (x[0] === 'aff') { var fs = HB.fields(x[1]); fs[0] = v; x[1] = fs.join('|'); } });
+        d.aff = d._l.filter(function (x) { return x[0] === 'aff'; }).map(function (x) { return x[1]; });
+      });
+      who.at = at;
+      return;
+    }
+    var rest = what.replace(who.key, ''), R = statItems(who.d), S = statItems(who.s), i, hit = -1;
+    for (i = 0; i < R.its.length; i++) if (bookKey(statTok(R.its[i]).name) === rest) { hit = i; break; }
+    if (hit < 0) {                                           /* "하린의 민첩": accept one stat the line ends with */
+      R.its.forEach(function (it, j) { var sk = bookKey(statTok(it).name); if (sk && rest.slice(-sk.length) === sk) hit = hit === -1 ? j : -2; });
+      if (hit < 0) hit = -1;
+    }
+    var t = hit > -1 ? statTok(R.its[hit]) : null, nv = t ? statNext(t.last, ch) : null;
+    if (nv != null) {
+      R.its[hit] = R.its[hit].replace(/\S+\s*$/, nv);
+      /* the translated copy lists the same stats in the same order */
+      if (S.its.length === R.its.length) { var ts = statTok(S.its[hit]); if (ts.last && (HB.grade(ts.last) ? HB.grade(nv) : /^\d+$/.test(ts.last))) S.its[hit] = S.its[hit].replace(/\S+\s*$/, nv); }
+      who.at = at;
+    }
+    R.put(); S.put();
+  });
 }
 function bookData() {
   var chat = C().chat || [], people = {}, shop = null;
   for (var i = 0; i < chat.length; i++) {
     var m = chat[i];
     if (isUserMes(m) || !m.mes || m.mes.indexOf('<') < 0) continue;
-    var p = shownBlocks(m, 'profile');
-    p.raw.forEach(function (raw, n) {
-      var name = trimS(HB.one(HB.parse(raw), 'name') || '');
-      if (!name || HB.isQ(name)) return;                   /* a stranger with no name yet cannot be told apart */
-      var key = name.toLowerCase().replace(/\s+/g, ''), show = p.shown[n];
-      people[key] = { key: key, name: trimS(HB.one(HB.parse(show), 'name') || '') || name, raw: show, at: i };
+    var a = bookBlocks(m.mes), b = m.extra && m.extra.display_text ? bookBlocks(m.extra.display_text) : [];
+    /* the translated copy is used only when it keeps every block in the same order */
+    if (b.length !== a.length || b.some(function (x, n) { return x[0] !== a[n][0]; })) b = a;
+    a.forEach(function (x, n) {
+      if (x[0] === 'shop') { shop = { raw: b[n][1], at: i }; return; }
+      if (x[0] === 'noti') { bookNoti(people, x[1], i); return; }
+      var d = HB.parse(x[1]), s = HB.parse(b[n][1]), name = trimS(HB.one(d, 'name'));
+      if (!name || HB.isQ(name)) return;                     /* a stranger with no name yet cannot be told apart */
+      var key = bookKey(name);
+      people[key] = { key: key, name: trimS(HB.one(s, 'name')) || name, d: d, s: s, at: i };
     });
-    var s = shownBlocks(m, 'shop');
-    if (s.raw.length) shop = { raw: s.shown[s.shown.length - 1], at: i };
   }
-  /* the person seen most recently comes first */
-  var list = Object.keys(people).map(function (k) { return people[k]; }).sort(function (a, b) { return b.at - a.at; });
+  /* the person seen or updated most recently comes first */
+  var list = Object.keys(people).map(function (k) { var p = people[k]; p.raw = bookText(p.s); return p; }).sort(function (a, b) { return b.at - a.at; });
   return { people: list, shop: shop };
 }
 /* how many AI replies came after the one that showed it */
