@@ -1487,8 +1487,8 @@ function newPack(c) {
 }
 function curPack() { var t = CF && getTheme(CF.theme); return t && t.pack ? t : null; }
 /* the chat's settings with the pack's windows laid over them */
-function effective(c) {
-  var t = getTheme(c.theme);
+function effective(c, pk) {
+  var t = pk || getTheme(c.theme);
   if (!t || !t.pack) return c;
   var e = clone(c), ws = t.win.status, wp = t.win.profile;
   WIN_KINDS.forEach(function (k) { e[k].on = !!t.win[k].on; });
@@ -1637,9 +1637,19 @@ function packSections(c, st) {
 }
 
 /* ---- export / import ---- */
+/* every zip carries settings and design: a plain theme is exported as a pack with the current chat's windows */
+function packOf(t) {
+  if (t.pack) return t;
+  var p = { id: t.builtin ? t.id + '-custom' : t.id, name: t.builtin ? t.name + ' 커스텀' : t.name, author: t.author || '', version: t.version || '1.0', description: t.description || '', fonts: t.fonts || [], win: {}, cw: [] };
+  if (t.builtin) { p.extends = t.id; p.css = ''; }
+  else { p.css = t.css || ''; if (t.js) p.js = t.js; if (t.extends) p.extends = t.extends; }
+  WIN_KINDS.forEach(function (k) { p.win[k] = winFrom(k, EF); });
+  return normPack(p);
+}
 function exportPack(t) {
+  t = packOf(t);
   var meta = clone(t), files = {};
-  delete meta.css; delete meta.js; delete meta.rev;
+  delete meta.css; delete meta.js; delete meta.rev; delete meta.builtin;
   WIN_KINDS.forEach(function (k) {
     var w = meta.win[k];
     if (trimS(w.html)) files['windows/' + k + '.html'] = w.html;
@@ -1654,6 +1664,7 @@ function exportPack(t) {
   files['theme.json'] = JSON.stringify(meta, null, 2);
   files['theme.css'] = t.css || '';
   if (t.js) files['theme.js'] = t.js;
+  files['README-AI.md'] = aiGuide(t);
   download((/^pack-/.test(t.id) ? '' : 'pack-') + t.id + '.zip', ZIP.write(files));
 }
 /* the window files of an imported pack: windows/<kind or tag>.html / .css */
@@ -1662,7 +1673,8 @@ function packFiles(m, find) {
   m.cw.forEach(function (w) { w.html = find('windows/' + w.tag + '.html') || w.html; w.css = find('windows/' + w.tag + '.css') || w.css; });
 }
 
-/* ---- the text a maker hands an AI to get a window's design ---- */
+
+/* ---- README-AI.md: everything an AI needs to edit or make a pack from this zip, in one file ---- */
 function sampleValue(f) {
   if (f.type === 'gauge') return '62/100';
   if (f.type === 'number') return '1,250';
@@ -1670,33 +1682,116 @@ function sampleValue(f) {
   return (f.label || f.k) + ' 예시';
 }
 function sampleCw(w) { return cwFields(w).map(function (f) { return f.k + ': ' + sampleValue(f); }).join('\n'); }
-function aiPrompt(kind, tag) {
-  var p = curPack(), w = kind ? p.win[kind] : p.cw.filter(function (x) { return x.tag === tag; })[0];
-  var name = kind ? WIN_NAME[kind] : w.name, t = kind || tag, lines;
-  if (kind) lines = (sampleOf(kind, EF) || '').split('\n').concat(extras(EF, kind).map(function (f) { return f.k + ': ' + sampleValue(f) + '   ← ' + (f.label || f.k) + ' (' + typeName(f.type) + ')'; }));
-  else lines = cwFields(w).map(function (f) { return f.k + ': ' + sampleValue(f) + '   ← ' + (f.label || f.k) + ' (' + typeName(f.type) + ')'; });
-  return 'SillyTavern "시스템 상태창" 확장의 창 디자인을 만들어 줘.\n\n' +
-    '창: ' + name + ' (태그 <' + t + '>)\n' +
-    'AI가 이 창에 적는 값 (키: 예시):\n' + lines.join('\n') + '\n\n' +
-    '규칙:\n' +
-    '- 결과물은 HTML 틀과 CSS 두 개. 각각 전체 내용을 코드 블록으로 줘.\n' +
-    '- HTML 틀 문법:\n' +
-    '  {{키}} 값 · {{키.label}} 항목 이름\n' +
-    '  {{키.cur}} {{키.max}} {{키.pct}} 게이지의 현재값 · 최대값 · 퍼센트(0-100)\n' +
-    '  {{키.1}} {{키.2}} … 값을 "|"로 나눈 칸\n' +
-    '  {{#키}} … {{/키}} 값이 있을 때만. 목록이면 항목마다 반복하고, 안에서 {{.}}는 항목 전체, {{1}} {{2}}는 항목을 "|"로 나눈 칸\n' +
-    '  {{^키}} … {{/키}} 값이 없을 때만\n' +
-    '  {{bar 키}} 게이지 막대 · {{grade 키}} 등급 칩(F~SSS, EX) · {{icon 이름}} 아이콘 (sys, status, quest, scan, shop, heart, fire, bolt, sword, gem, coin, medal, timer, warn, lock, eye, spark, point)\n' +
-    '  같은 키의 {{#키}}는 서로 겹쳐 쓸 수 없다.\n' +
-    '- <script>는 쓰지 마. 버튼 동작 같은 게 필요하면 따로 말해.\n' +
-    '- 창은 섀도 DOM 안에 그려진다. CSS 변수는 :host에 선언하고, :root·body·html 선택자는 쓰지 마.\n' +
-    '- 바깥을 <div class="win">으로 감싸면 지금 테마의 창 틀과 색을 그대로 쓴다. 다른 창과 겹치지 않게 내 창만의 클래스 이름을 붙여.\n' +
-    '- 좁은 화면은 @media 대신 @container hb (max-width:540px) 로 처리해.\n' +
-    '- 글자가 배경에 묻히지 않게 대비를 충분히 주고, 폰 화면(폭 360px)에서도 깨지지 않게 해.\n\n' +
-    '원하는 디자인: (여기에 적기)';
+var KEY_NOTE = {
+  status: 'date 날짜 · time 시간 · loc 장소 · weather 날씨 · name 이름 · lv 레벨 · rank 랭크 · role 직업 · title 장착 칭호 · titles 보유 칭호(목록) · exp 경험치 · hp · mp · fat 피로도 · fx 버프/디버프(목록) · quest 진행 중 퀘스트(목록) · money 소지금 · point 포인트 · sp 스탯 포인트 · stat 능력치(목록, "이름 수치 등급") · inv 인벤토리(목록, "이름|희귀도|수량") · skill 스킬(목록, "이름|레벨|종류|비용|효과")',
+  system: 'type(notice/talk/warn/error/levelup) · text 본문 · sub 둘째 줄 · log 로그(여러 줄, "행동|OK 또는 FAIL")',
+  noti: '한 줄에 알림 하나. 키는 exp/skill/title/item/aff/stat/quest/money/point/lv, 값은 "내용|변화"',
+  quest: 'type 종류 · title 제목 · desc 설명 · time "남은 시간|남은 비율%" · goal 목표(목록, "목표 cur/max") · reward 보상(목록) · penalty 패널티(목록) · state active/clear/fail · grade 평가 등급',
+  profile: 'name 이름 · rank 등급 · info 나이·직업·소속 · tag 특징(목록, "!"로 시작하면 경고) · stat 능력치(목록, "이름 등급", "*"로 시작하면 고유 능력치) · aff "호감도 0-100|감정" · mind 속마음 · lock 잠금 해제 조건',
+  shop: 'point 잔액 · item 상품(여러 줄, "이름|희귀도|가격|효과|재고") · refresh 갱신까지 남은 시간'
+};
+function aiGuide(t) {
+  var ef = effective(merge(DEF, CF || {}), t), L = [];
+  function fieldDoc(f) { return '  - `' + f.k + '` ' + (f.label || '') + ' · ' + f.type + (f.desc ? ' · AI 설명: ' + f.desc : ''); }
+  L.push('# 시스템 상태창 커스텀 팩 · AI 작업 안내서', '',
+    '이 zip은 SillyTavern 확장 "시스템 상태창"의 **커스텀 팩**이다. 팩 하나에 창 설정(어떤 창을 언제 띄우고 어떤 값을 적는지)과 디자인(HTML·CSS)이 모두 들어 있다.',
+    '사용자의 요청에 맞게 이 파일들을 고치거나 새로 만들어라. 이 안내서의 규칙을 벗어나면 확장이 파일을 읽지 못한다.', '',
+    '## 1. 결과물', '',
+    '- 아래 "파일 구성" 그대로 **모든 파일의 전체 내용**을 준다. 바꾸지 않은 파일도 빠짐없이 준다. 가능하면 zip 하나로 준다.',
+    '- 새 팩을 만들면 theme.json의 `id`를 새 값으로 바꾼다. 같은 id면 사용자의 기존 팩을 덮어쓴다.',
+    '- JSON에는 주석을 넣지 않는다. 문자열 안 줄바꿈은 `\\n`으로 쓴다.', '',
+    '## 2. 파일 구성', '',
+    '| 파일 | 필수 | 내용 |', '|---|---|---|',
+    '| theme.json | 필수 | 팩 정보와 창 설정 |',
+    '| theme.css | 필수 (비워도 됨) | 모든 창에 함께 쓰는 CSS |',
+    '| theme.js | 선택 | 창을 그리는 함수를 덮어쓰는 JS |',
+    '| windows/<이름>.html | 선택 | 창의 HTML 틀. <이름>은 기본 창(status, system, noti, quest, profile, shop) 또는 새 창의 tag |',
+    '| windows/<이름>.css | 선택 | 그 창에만 쓰는 CSS |',
+    '| README-AI.md | 선택 | 이 안내서. 그대로 넣어도 된다 |', '',
+    '## 3. theme.json', '',
+    '```json',
+    '{',
+    '  "id": "my-pack",            // 영문 소문자 · 숫자 · - 만',
+    '  "name": "팩 이름", "author": "", "version": "1.0", "description": "한 줄 소개",',
+    '  "extends": "holo-blue",     // 바탕 디자인. 이 위에 theme.css와 창 CSS가 덧붙는다',
+    '  "fonts": ["https://fonts.googleapis.com/css2?family=..."],',
+    '  "pack": 1,',
+    '  "win": { "status": {…}, "system": {…}, "noti": {…}, "quest": {…}, "profile": {…}, "shop": {…} },',
+    '  "cw": [ {…새 창…} ]',
+    '}', '```',
+    '(위 `//` 설명은 이해를 돕기 위한 것이다. 실제 파일에는 넣지 않는다.)', '',
+    '### win: 기본 창 6종', '',
+    '모든 기본 창 공통:',
+    '- `on`: 1 켜기, 0 끄기',
+    '- `when`: 언제 띄울지. **영어 문장** (롤플 AI가 읽는다). 비우면 기본 문장을 쓴다. status는 "응답 중간에 한 번 더 띄우는 조건"이다 (응답 맨 위 상태창은 항상 붙는다).',
+    '- `extra`: 추가 항목 목록. `[{"k":"corr","label":"오염도","type":"gauge","desc":"corruption of the soul","on":1}]`',
+    '  - `k` 키: 영문 소문자로 시작, 영문 소문자 · 숫자 · _ 만, 24자 이하. 그 창의 기본 키와 겹치면 안 된다.',
+    '  - `type`: text 글자 · gauge 게이지(cur/max) · number 숫자 · list 목록',
+    '  - `desc`: 롤플 AI에게 주는 설명. **영어**로 짧게.',
+    '  - `label`: 화면에 보이는 이름.',
+    '',
+    'status만: `grow` ("lv" 레벨 또는 "rank" 랭크) · `stats` 능력치 이름(쉼표 구분) · `fields` 기본 항목 켜기/끄기 `{"date":1,"time":1,…}`',
+    'profile만: `stats` 공통 능력치(쉼표 구분) · `uniq` 고유 능력치 · `aff` 호감도 · `mind` 속마음 (각각 1/0)', '',
+    '기본 창의 키 (AI가 채팅에 쓰는 값):');
+  WIN_KINDS.forEach(function (k) { L.push('- **' + k + '** (' + WIN_NAME[k] + '): ' + KEY_NOTE[k]); });
+  L.push('', '### cw: 새 창', '',
+    '```json',
+    '{ "tag": "guild", "name": "길드", "on": 1, "mode": "track", "when": "Whenever the guild standing changes",',
+    '  "fields": [ {"k":"rank","label":"길드 등급","type":"text","desc":"guild rank, F to S","on":1},',
+    '              {"k":"contrib","label":"기여도","type":"number","desc":"contribution points","on":1} ] }',
+    '```',
+    '- `tag`: 채팅에 `<tag>…</tag>`로 쓰이는 이름. 영문 소문자로 시작, 영문 소문자 · 숫자 · - · _ 만, 2~24자. 기본 창 이름(status, system, noti, quest, profile, shop)과 HTML 태그 이름(div, span, b, p, details 등)은 쓸 수 없다.',
+    '- `mode`: "snap" 그때그때 (나올 때마다 AI가 전부 적는다) · "track" 누적 (AI는 바뀐 줄만 적고 확장이 더해서 기억한다. gauge·number는 +n/-n, list는 +항목/-항목, text는 새 값)',
+    '- `when`: 언제 띄울지. **영어 문장**. 비우면 기본 문장.',
+    '- `fields`: 항목. 규칙은 extra와 같다.', '',
+    '## 4. 창 블록 형식', '',
+    '롤플 AI는 창을 이렇게 쓴다. 한 줄에 `키: 값` 하나, 목록 항목은 `;`, 항목 안 칸은 `|`로 나눈다.', '');
+  WIN_KINDS.forEach(function (k) { if (ef[k].on || t.win[k].extra.length) L.push('```', '<' + k + '>', sampleOf(k, ef) || '', '</' + k + '>', '```'); });
+  t.cw.forEach(function (w) { L.push('```', '<' + w.tag + '>', sampleCw(w), '</' + w.tag + '>', '```'); });
+  L.push('', '지금 팩의 추가 항목과 새 창:');
+  var any = false;
+  WIN_KINDS.forEach(function (k) { var ex = t.win[k].extra; if (ex.length) { any = true; L.push('- ' + k + ' 추가 항목'); ex.forEach(function (f) { L.push(fieldDoc(f)); }); } });
+  t.cw.forEach(function (w) { any = true; L.push('- 새 창 `' + w.tag + '` (' + w.name + ', ' + (w.mode === 'track' ? '누적' : '그때그때') + ')'); cwFields(w).forEach(function (f) { L.push(fieldDoc(f)); }); });
+  if (!any) L.push('- 없음');
+  L.push('', '## 5. HTML 틀 (windows/<이름>.html)', '',
+    '파일이 없으면 기본 창은 기본 디자인, 새 창은 항목마다 한 줄씩 그리는 기본 틀을 쓴다. JS 없이 아래 문법만 쓴다.', '',
+    '| 문법 | 뜻 |', '|---|---|',
+    '| `{{키}}` | 값 (HTML은 자동으로 이스케이프된다) |',
+    '| `{{키.label}}` | 항목의 표시 이름 |',
+    '| `{{키.cur}}` `{{키.max}}` `{{키.pct}}` | 게이지의 현재값 · 최대값 · 퍼센트(0~100) |',
+    '| `{{키.1}}` `{{키.2}}` | 값을 `\\|`로 나눈 첫째 · 둘째 칸 |',
+    '| `{{#키}} … {{/키}}` | 값이 있을 때만. 목록이면 항목마다 반복하고, 안에서 `{{.}}`는 항목 전체, `{{1}}` `{{2}}`는 항목의 칸 |',
+    '| `{{^키}} … {{/키}}` | 값이 없을 때만 |',
+    '| `{{bar 키}}` | 게이지 막대 (안에서 `{{bar 2}}`처럼 칸 번호도 된다) |',
+    '| `{{grade 키}}` | 등급 칩 (F E D C B A S SS SSS EX, +/-) |',
+    '| `{{icon 이름}}` | 아이콘: ' + Object.keys(ICON).join(', ') + ' |', '',
+    '- 같은 키의 `{{#키}}`를 서로 겹쳐 쓸 수 없다. 다른 키끼리는 겹쳐도 된다.',
+    '- `<script>`와 `on…=` 속성은 쓰지 않는다. 동작이 필요하면 theme.js를 쓴다.', '',
+    '새 창 기본 틀 예시:', '```html',
+    t.cw.length ? defaultHtml(t.cw[0]) : defaultHtml({ tag: 'example', name: '예시 창', fields: [{ k: 'power', label: '마력', type: 'gauge', on: 1 }, { k: 'note', label: '메모', type: 'text', on: 1 }, { k: 'items', label: '목록', type: 'list', on: 1 }] }),
+    '```', '',
+    '## 6. CSS', '',
+    '- 창은 **섀도 DOM** 안에 그려진다. CSS 변수는 `:host`에 선언하고, `:root` · `body` · `html` 선택자는 쓰지 않는다.',
+    '- 좁은 화면은 `@media` 대신 `@container hb (max-width:540px)`로 처리한다.',
+    '- 웹폰트는 `@import` 대신 theme.json의 `fonts`에 https CSS 주소로 넣는다.',
+    '- `<div class="win">`으로 감싸면 바탕 테마의 창 틀 · 배경 · 등장 효과를 그대로 쓴다. 안쪽 구조는 `.hd`(머리) + `.bd`(본문)를 쓰면 기본 창과 같은 모양이 된다.',
+    '- 새 창에는 그 창만의 클래스 이름을 붙여 다른 창과 겹치지 않게 한다.',
+    '- 바탕 테마의 주요 변수: `--hi` 강조 글자 · `--cy` 아이콘·선 · `--line` 테두리 · `--panel-a` `--panel-b` 창 배경(위·아래) · `--txt` 본문 · `--dim` 보조 글자 · `--mute` 흐린 글자 · `--warn` `--ok` `--amber` `--violet` `--rose` 강조색 · `--f-disp` `--f-body` 글꼴',
+    '- 색만 바꾸려면 theme.css에 `:host { --hi: #ffd9a0; --cy: #ffb14a; --panel-a: rgba(46,28,10,.93); --panel-b: rgba(24,14,5,.96); --txt: #fff1dc; --dim: #cbb090; }` 처럼 변수만 적는다.',
+    '- 기본 창의 바깥 클래스: 상태창 `.st`, 시스템 `.sys` `.talk` `.warn` `.err` `.lvup`, 알림 `.toast` `.t`, 인물 `.ch-top` `.slist`, 상점 `.item`',
+    '- 글자가 배경에 묻히지 않게 대비를 충분히 주고, 폰 화면(폭 360px)에서도 깨지지 않게 한다. 정보를 가리거나 깜빡이는 애니메이션은 쓰지 않는다.', '',
+    '## 7. theme.js (선택)', '',
+    '- `new Function("HB", "theme", 코드)`로 실행된다. 틀 · CSS로 안 되는 동작이 필요할 때만 쓴다.',
+    '- `HB.R[창이름] = function (d) { return "HTML"; }` 창을 그리는 함수. `d`는 블록을 읽은 값: `HB.one(d, "키")` 첫 값, `HB.all(d, "키")` 목록, `HB.esc(문자열)` 이스케이프.',
+    '- `HB.B[창이름] = function (root) { … }` 그려진 뒤 버튼 등을 연결한다. `root`는 창의 바깥 요소다.',
+    '- 이 JS는 사용자 실리태번에서 그대로 실행된다. 외부로 데이터를 보내거나 페이지 다른 곳을 건드리지 않는다.', '',
+    '## 8. 마지막 확인', '',
+    '- theme.json이 올바른 JSON인가 (주석 없음, 따옴표 · 쉼표)',
+    '- id · tag · 키 규칙을 지켰나, 키가 겹치지 않나',
+    '- when · desc는 영어인가',
+    '- windows/ 파일 이름이 창 이름(tag)과 같은가');
+  return L.join('\n') + '\n';
 }
-function typeName(t) { return (FTYPES.filter(function (x) { return x[0] === t; })[0] || ['', '글자'])[1]; }
-
 /* ---------- status store: one snapshot per message, saved inside the chat file ----------
    message.extra.hb_sw = { h: hash of what produced it, st: state after this message, f: 1 = old-style full blocks,
                            o: manual corrections (block text), sw: swipe it belongs to }
@@ -2105,18 +2200,23 @@ var UI_CSS = [
 '#hbs-ov textarea.hbs-code:focus{border-color:rgba(120,214,255,.6)}',
 '#hbs-ov .hbs-code{margin:0;padding:10px 12px;font:12px/1.6 "JetBrains Mono",ui-monospace,Consolas,monospace;color:#d6ecf8!important;-webkit-text-fill-color:#d6ecf8;background:rgba(4,12,22,.55);border:1px solid rgba(120,214,255,.2)!important;white-space:pre-wrap;word-break:break-word;text-align:left;max-height:360px;overflow:auto}',
 '#hbs-ov .hbs-stgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px 12px}',
-/* pack editor */
-'#hbs-ov .hbs-pk{display:flex;flex-direction:column;gap:12px;padding:12px 2px 6px}',
-'#hbs-ov .hbs-fl{display:flex;flex-direction:column;gap:8px}',
-'#hbs-ov .hbs-frow{display:grid;grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 84px 32px;gap:6px;align-items:center;padding-bottom:8px;border-bottom:1px dashed var(--b)}',
-'#hbs-ov .hbs-frow .d{grid-column:2 / 5}',
-'#hbs-ov .hbs-frow input[type=checkbox]{margin:0;width:16px;height:16px}',
-'#hbs-ov .hbs-frow.bad .hbs-in[data-k$=".k"]{border-color:var(--warn)!important;background:#fff5f6}',
-'#hbs-ov .hbs-in.sm,#hbs-ov .hbs-sel.sm{font-size:13px;padding:6px 8px}',
-'#hbs-ov .hbs-btn.sm.dng{padding:5px 0}',
+/* custom pack settings */
+'#hbs-ov .hbs-fl{display:flex;flex-direction:column;gap:8px;align-items:flex-start}',
+'#hbs-ov .hbs-frow{align-self:stretch;display:grid;grid-template-columns:18px minmax(0,1fr) 84px 30px;gap:6px;align-items:center;padding:8px;border:1px solid var(--b);border-radius:8px;background:var(--bg2)}',
+'#hbs-ov .hbs-frow input[type=checkbox]{margin:0;width:16px;height:16px;accent-color:var(--ac)}',
+'#hbs-ov .hbs-frow .r2{grid-column:2 / 5;display:flex;gap:6px;min-width:0}',
+'#hbs-ov .hbs-frow .r2 .k{flex:0 0 108px;font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:12.5px}',
+'#hbs-ov .hbs-frow .r2 .hbs-in:not(.k){flex:1 1 auto;min-width:0}',
+'#hbs-ov .hbs-frow.bad .k{border-color:var(--warn)!important;background:#fff5f6}',
+'#hbs-ov .hbs-x2{width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--b2)!important;border-radius:8px;background:#fff;color:var(--dim);font-size:16px;line-height:1;padding:0;margin:0;cursor:pointer}',
+'#hbs-ov .hbs-x2:hover{border-color:var(--warn)!important;color:var(--warn)}',
+'#hbs-ov .hbs-in.sm,#hbs-ov .hbs-sel.sm{font-size:13px;padding:6px 8px;min-width:0}',
 '#hbs-ov .hbs-help.warn{color:var(--warn)}',
-'#hbs-ov textarea.hbs-ta.code{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:12px;line-height:1.5;min-height:90px;white-space:pre;overflow:auto;color:#1d2530!important;background:#f6f8fa}',
-'#hbs-ov .hbs-f > label small,#hbs-ov .hbs-f > .l small{font-weight:400;color:var(--dim);margin-left:6px}',
+'#hbs-ov textarea.hbs-ta.when{min-height:58px;font-size:13px}',
+'#hbs-ov textarea.hbs-ta.code{font-family:"JetBrains Mono",ui-monospace,Consolas,monospace;font-size:12px;line-height:1.5;min-height:110px;white-space:pre;overflow:auto;background:#f6f8fa}',
+'#hbs-ov .hbs-newcw{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:10px}',
+'#hbs-ov .hbs-newcw .hbs-btn{grid-column:1 / -1}',
+'#hbs-ov .hbs-f > label small,#hbs-ov .hbs-f > .l small,#hbs-ov h3 small{font-weight:400;font-size:12px;color:var(--dim);margin-left:6px}',
 '#hbs-ov .hbs-ta.hbs-stlist{min-height:0;font-size:13px;line-height:1.7;white-space:pre;overflow-x:auto}',
 '#hbs-ov .hbs-guide{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--tx);line-height:1.6}',
 '#hbs-ov .hbs-guide h4{margin:6px 0 0;font-size:13.5px;font-weight:700;color:var(--tx)}',
@@ -2245,13 +2345,6 @@ function acc(id, title, summary, inner) {
   return '<div class="hbs-acc"><button type="button" data-acc="' + id + '" aria-expanded="' + open + '">' + h(title) + '<small>' + h(summary) + '</small>' + CHEV + '</button>' +
     '<div' + (open ? '' : ' hidden') + '>' + inner + '</div></div>';
 }
-/* a window card: switch, options, and a live preview drawn with the current design */
-function card(kind, title, desc, opts) {
-  var on = !!CF[kind].on;
-  /* a switched-off window shows only its row: no options, no preview */
-  return '<div class="hbs-card' + (on ? '' : ' off') + '">' + row(kind + '.on', title, desc) + (on && opts ? '<div class="hbs-opt">' + opts + '</div>' : '') +
-    (on ? '<div class="hbs-prev" data-prev="' + kind + '"></div>' : '') + '</div>';
-}
 function presetSummary(p) {
   var c = merge(DEF, p), on = KINDS.filter(function (k) { return c[k].on; }).length;
   return (PERSONA[c.persona] || PERSONA.neutral)[0] + ' · 창 ' + on + '종 · ' + getTheme(c.theme).name + (trimS(c.world) ? ' · ' + trimS(c.world).slice(0, 30) + (trimS(c.world).length > 30 ? '…' : '') : '');
@@ -2283,85 +2376,94 @@ function worldChips(c) {
   }).join('') + '</div>' +
     '<div class="hbs-line nowrap"><input class="hbs-in" id="hbs-wname" placeholder="이 내용의 이름"><button type="button" class="hbs-btn" data-act="w-save">세계관 저장</button></div>';
 }
-/* ---- custom pack editor (custom tab, shown while the chat uses a pack) ---- */
+/* ---- the window settings of the settings tab: the chat's own, or with a custom pack the pack's (paths "#win.…") ---- */
+function wpath(k) { return EF.pack ? '#win.' + k : k; }
+/* added fields: [on] [display name] [type] [×] / [key] [what the AI is told] */
 function fieldRows(path, list, kind) {
-  var own = kind ? OWN_KEYS[kind] || [] : [], seen = {};
-  return '<div class="hbs-fl">' + list.map(function (f, j) {
-    var p = path + '.' + j, bad = !KEY_RE.test(f.k) || own.indexOf(f.k) > -1 || seen[f.k];
-    seen[f.k] = 1;
+  var own = kind ? OWN_KEYS[kind] || [] : [], seen = {}, anyBad = false;
+  var rows = list.map(function (f, j) {
+    /* an empty key is just not filled in yet (the field is skipped); only a wrong one is marked */
+    var p = path + '.' + j, bad = !!f.k && (!KEY_RE.test(f.k) || own.indexOf(f.k) > -1 || !!seen[f.k]);
+    if (f.k) seen[f.k] = 1; if (bad) anyBad = true;
     return '<div class="hbs-frow' + (bad ? ' bad' : '') + '"><input type="checkbox" data-k="' + p + '.on"' + (f.on ? ' checked' : '') + ' aria-label="켜기">' +
-      '<input class="hbs-in sm" data-k="' + p + '.k" value="' + h(f.k) + '" placeholder="키 (영문)" aria-label="키">' +
       '<input class="hbs-in sm" data-k="' + p + '.label" value="' + h(f.label) + '" placeholder="표시 이름" aria-label="표시 이름">' +
       '<select class="hbs-sel sm" data-k="' + p + '.type" aria-label="종류">' + FTYPES.map(function (x) { return '<option value="' + x[0] + '"' + (f.type === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
-      '<button type="button" class="hbs-btn sm dng" data-act="pk-fdel" data-path="' + path + '" data-i="' + j + '" aria-label="항목 삭제">×</button>' +
-      '<input class="hbs-in sm d" data-k="' + p + '.desc" value="' + h(f.desc) + '" placeholder="AI에게 줄 설명 (영어 권장, 예: corruption level of the soul)" aria-label="AI 설명"></div>';
-  }).join('') + (list.some(function (f, j) { return !KEY_RE.test(f.k) || own.indexOf(f.k) > -1; }) || Object.keys(seen).length < list.length ? '<p class="hbs-help warn">빨간 칸의 키를 확인하세요. 영문 소문자로 시작하고, 기본 항목·다른 항목과 겹치면 안 됩니다.</p>' : '') +
-    '</div><button type="button" class="hbs-btn sm" data-act="pk-fadd" data-path="' + path + '">+ 항목</button>';
+      '<button type="button" class="hbs-x2" data-act="pk-fdel" data-path="' + path + '" data-i="' + j + '" aria-label="항목 삭제">×</button>' +
+      '<div class="r2"><input class="hbs-in sm k" data-k="' + p + '.k" value="' + h(f.k) + '" placeholder="키 (영문)" aria-label="키">' +
+      '<input class="hbs-in sm" data-k="' + p + '.desc" value="' + h(f.desc) + '" placeholder="AI에게 줄 설명 (영어)" aria-label="AI 설명"></div></div>';
+  }).join('');
+  return '<div class="hbs-fl">' + rows + (anyBad ? '<p class="hbs-help warn">빨간 키를 확인하세요. 영문 소문자로 시작하고, 다른 항목과 겹치면 안 됩니다.</p>' : '') +
+    '<button type="button" class="hbs-btn sm" data-act="pk-fadd" data-path="' + path + '">+ 항목 추가</button></div>';
 }
-function designRows(path, hasDefault) {
-  return '<div class="hbs-f"><label>HTML 틀</label><textarea class="hbs-ta code" data-k="' + path + '.html" spellcheck="false" placeholder="' + (hasDefault ? '비워 두면 기본 디자인' : '비워 두면 기본 틀') + '"></textarea></div>' +
-    '<div class="hbs-f"><label>CSS</label><textarea class="hbs-ta code" data-k="' + path + '.css" spellcheck="false" placeholder="이 창에만 쓰는 CSS"></textarea></div>';
+function codeAcc(id, path, label, hasDefault) {
+  var html = trimS(getPath(CF, path + '.html') || '');
+  return acc(id, label, html ? '직접 만든 디자인' : hasDefault ? '기본 디자인' : '기본 틀',
+    '<div class="hbs-f"><label>HTML 틀</label><textarea class="hbs-ta code" data-k="' + path + '.html" spellcheck="false" placeholder="' + (hasDefault ? '비워 두면 기본 디자인' : '비워 두면 기본 틀') + '"></textarea></div>' +
+    '<div class="hbs-f"><label>CSS</label><textarea class="hbs-ta code" data-k="' + path + '.css" spellcheck="false" placeholder="이 창에만 쓰는 CSS"></textarea></div>');
 }
-function winEditor(p, k) {
-  var w = p.win[k], base = '#win.' + k, ex = w.extra.length, inner = row(base + '.on', '켜기', WIN_NAME[k] + '을 씁니다.');
-  if (k === 'status') {
-    inner += '<div class="hbs-f"><span class="l">성장 표시</span><div class="hbs-chips">' + chip(base + '.grow', 'lv', '레벨 · 경험치') + chip(base + '.grow', 'rank', '랭크 · 진행도') + '</div></div>' +
-      '<div class="hbs-f"><span class="l">기본 항목</span><div class="hbs-grp">' + FIELD_GROUPS.map(function (g) { return '<span>' + g[0] + '</span><div class="hbs-chips">' + g[1].map(function (x) { return ck(base + '.fields.' + x[0], x[1]); }).join('') + '</div>'; }).join('') + '</div></div>' +
-      '<div class="hbs-f"><label>능력치 이름 (쉼표로 구분)</label><input class="hbs-in" data-k="' + base + '.stats" value="' + h(w.stats) + '"></div>';
-  }
-  if (k === 'profile') {
-    inner += '<div class="hbs-f"><label>공통 능력치 (쉼표로 구분)</label><input class="hbs-in" data-k="' + base + '.stats" value="' + h(w.stats) + '"></div>' +
-      '<div class="hbs-chips">' + ck(base + '.uniq', '인물별 고유 능력치') + ck(base + '.aff', '호감도') + ck(base + '.mind', '현재 생각') + '</div>';
-  }
-  inner += '<div class="hbs-f"><label>' + (k === 'status' ? '중간에 다시 띄울 때' : '언제 띄울지') + ' <small>비우면 기본 문장</small></label><textarea class="hbs-ta" style="min-height:60px" data-k="' + base + '.when" placeholder="' + h(WHEN[k]) + '"></textarea></div>' +
-    '<div class="hbs-f"><span class="l">추가 항목</span>' + fieldRows(base + '.extra', w.extra, k) + '</div>' +
-    designRows(base, true) +
-    '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="pk-ai" data-kind="' + k + '">AI 요청문 복사</button></div>' +
-    '<div class="hbs-prev" data-prev="' + k + '"></div>';
-  return acc('pk-' + k, WIN_NAME[k], (w.on ? '켜짐' : '꺼짐') + (ex ? ' · 추가 항목 ' + ex : '') + (trimS(w.html) ? ' · 직접 디자인' : ''), '<div class="hbs-pk">' + inner + '</div>');
+/* what a pack adds under each built-in window's options */
+function packMore(k) {
+  var base = '#win.' + k;
+  return '<div class="hbs-f"><label>' + (k === 'status' ? '중간에 다시 띄울 때' : '언제 띄울지') + '<small>비우면 기본 · 영어</small></label><textarea class="hbs-ta when" data-k="' + base + '.when" placeholder="' + h(WHEN[k]) + '"></textarea></div>' +
+    '<div class="hbs-f"><span class="l">추가 항목</span>' + fieldRows(base + '.extra', EF.pack.win[k].extra, k) + '</div>' +
+    codeAcc('pkd-' + k, base, '디자인 코드', true);
 }
-function cwEditor(p, w, i) {
+/* a window card: switch, options, and a live preview drawn with the current design */
+function winCard(k, title, desc, opts) {
+  var on = !!EF[k].on, more = EF.pack ? packMore(k) : '';
+  return '<div class="hbs-card' + (on ? '' : ' off') + '">' + row(wpath(k) + '.on', title, desc) +
+    (on && (opts || more) ? '<div class="hbs-opt">' + (opts || '') + more + '</div>' : '') +
+    (on ? '<div class="hbs-prev" data-prev="' + k + '"></div>' : '') + '</div>';
+}
+function cwCard(w, i) {
   var base = '#cw.' + i;
-  var inner = row(base + '.on', '켜기', '태그 &lt;' + h(w.tag) + '&gt;') +
+  return '<div class="hbs-card' + (w.on ? '' : ' off') + '">' + row(base + '.on', h(w.name), '&lt;' + h(w.tag) + '&gt; · ' + (w.mode === 'track' ? '누적' : '그때그때')) +
+    '<div class="hbs-opt">' +
     '<div class="hbs-f"><label>이름</label><input class="hbs-in" data-k="' + base + '.name" value="' + h(w.name) + '"></div>' +
     '<div class="hbs-f"><span class="l">기억 방식</span><div class="hbs-chips">' + chip(base + '.mode', 'snap', '그때그때') + chip(base + '.mode', 'track', '누적') + '</div>' +
-    '<p class="hbs-help">' + (w.mode === 'track' ? '누적: AI는 바뀐 값만 적고, 확장이 더해서 기억합니다. 길드 등급처럼 계속 이어지는 값에 씁니다.' : '그때그때: 나올 때마다 AI가 전부 적습니다. 각성 알림처럼 한 번 보여 주는 창에 씁니다.') + '</p></div>' +
-    '<div class="hbs-f"><label>언제 띄울지 <small>비우면 기본 문장</small></label><textarea class="hbs-ta" style="min-height:60px" data-k="' + base + '.when" placeholder="' + h(WHEN[w.mode === 'track' ? 'track' : 'snap']) + '"></textarea></div>' +
+    '<p class="hbs-help">' + (w.mode === 'track' ? 'AI는 바뀐 값만 적고, 확장이 더해서 기억합니다.' : '나올 때마다 AI가 전부 적습니다.') + '</p></div>' +
+    '<div class="hbs-f"><label>언제 띄울지<small>비우면 기본 · 영어</small></label><textarea class="hbs-ta when" data-k="' + base + '.when" placeholder="' + h(WHEN[w.mode === 'track' ? 'track' : 'snap']) + '"></textarea></div>' +
     '<div class="hbs-f"><span class="l">항목</span>' + fieldRows(base + '.fields', w.fields, null) + '</div>' +
-    designRows(base, false) +
-    '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="pk-tpl" data-i="' + i + '">기본 틀 넣기</button><button type="button" class="hbs-btn sm" data-act="pk-ai" data-tag="' + h(w.tag) + '">AI 요청문 복사</button>' +
-    '<span class="hbs-sp"></span><button type="button" class="hbs-btn sm dng" data-act="pk-cwdel" data-i="' + i + '">이 창 삭제</button></div>' +
-    '<div class="hbs-prev" data-prev="' + h(w.tag) + '"></div>';
-  return acc('pk-cw-' + w.tag, w.name, (w.on ? '켜짐' : '꺼짐') + ' · ' + (w.mode === 'track' ? '누적' : '그때그때') + ' · 항목 ' + w.fields.length, '<div class="hbs-pk">' + inner + '</div>');
+    codeAcc('pkd-cw-' + w.tag, base, '디자인 코드', false) +
+    '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="pk-tpl" data-i="' + i + '">기본 틀을 코드에 넣기</button><span class="hbs-sp"></span><button type="button" class="hbs-btn sm dng" data-act="pk-cwdel" data-i="' + i + '">이 창 삭제</button></div>' +
+    '</div>' + (w.on ? '<div class="hbs-prev" data-prev="' + h(w.tag) + '"></div>' : '') + '</div>';
 }
-function packEditor(p) {
-  return '<div class="hbs-sec"><h3>팩 편집 <small>이 팩을 쓰는 모든 채팅에 적용됩니다</small><span class="hbs-sp"></span><button type="button" class="hbs-btn sm" data-act="th-exp" data-id="' + h(p.id) + '">팩 내보내기</button></h3>' +
-    '<div class="hbs-stgrid">' + [['name', '이름'], ['author', '제작자'], ['version', '버전'], ['description', '설명']].map(function (x) {
-      return '<div class="hbs-f"><label>' + x[1] + '</label><input class="hbs-in" data-k="#' + x[0] + '" value="' + h(p[x[0]] || '') + '"></div>';
-    }).join('') + '</div></div>' +
-    '<div class="hbs-sec"><h3>기본 창</h3>' + WIN_KINDS.map(function (k) { return winEditor(p, k); }).join('') + '</div>' +
-    '<div class="hbs-sec"><h3>새 창</h3>' + p.cw.map(function (w, i) { return cwEditor(p, w, i); }).join('') +
-    '<div class="hbs-line nowrap" style="margin-top:10px"><input class="hbs-in" id="pk-tag" placeholder="태그 (영문, 예: awaken)"><input class="hbs-in" id="pk-name" placeholder="이름 (예: 각성 창)"><button type="button" class="hbs-btn pri" data-act="pk-cwadd">+ 새 창</button></div></div>' +
-    '<div class="hbs-sec"><h3>팩 전체</h3>' + acc('pk-all', 'CSS · JS', '모든 창에 함께 쓰는 코드',
-      '<div class="hbs-f"><label>CSS</label><textarea class="hbs-ta code" data-k="#css" spellcheck="false" placeholder="모든 창에 쓰는 CSS"></textarea></div>' +
-      '<div class="hbs-f"><label>JS <small>HB.R / HB.B로 창을 그리는 함수를 덮어씁니다</small></label><textarea class="hbs-ta code" data-k="#js" spellcheck="false" placeholder="선택. 비워 두면 쓰지 않습니다."></textarea></div>') + '</div>';
+function windowsSection() {
+  var e = EF, pk = e.pack, f = e.status.fields, S_ = wpath('status'), P_ = wpath('profile');
+  var picked = Object.keys(f).filter(function (k) { return f[k]; }).map(function (k) { return FIELD_NAMES[k]; });
+  return (pk ? '<div class="hbs-sec"><h3>커스텀 팩<small>이 팩을 쓰는 모든 채팅에 함께 적용됩니다</small></h3><div class="hbs-stgrid">' +
+      [['name', '이름'], ['author', '제작자'], ['version', '버전'], ['description', '설명']].map(function (x) {
+        return '<div class="hbs-f"><label>' + x[1] + '</label><input class="hbs-in" data-k="#' + x[0] + '" value="' + h(pk[x[0]] || '') + '"></div>';
+      }).join('') + '</div></div>' : '') +
+    '<div class="hbs-sec"><h3>기본 상태창</h3>' + winCard('status', '상태창', '모든 AI 응답의 맨 위에 붙습니다.',
+      '<div class="hbs-f"><span class="l">성장 표시</span><div class="hbs-chips">' + chip(S_ + '.grow', 'lv', '레벨 · 경험치') + chip(S_ + '.grow', 'rank', '랭크 · 진행도') + '</div></div>' +
+      acc('fields', '표시할 항목', picked.length + '개 · ' + picked.join(', '),
+        '<div class="hbs-line"><span class="hbs-help">한 번에 고르기</span><button type="button" class="hbs-btn sm" data-act="fset" data-v="min">최소</button><button type="button" class="hbs-btn sm" data-act="fset" data-v="simple">심플</button><button type="button" class="hbs-btn sm" data-act="fset" data-v="full">전체</button></div>' +
+        '<div class="hbs-grp">' + FIELD_GROUPS.map(function (g) { return '<span>' + g[0] + '</span><div class="hbs-chips">' + g[1].map(function (x) { return ck(S_ + '.fields.' + x[0], x[1]); }).join('') + '</div>'; }).join('') + '</div>' +
+        (f.stat ? '<div class="hbs-f"><label for="hbs-stats">능력치 이름 (쉼표로 구분)</label><input id="hbs-stats" class="hbs-in" data-k="' + S_ + '.stats" value="' + h(e.status.stats) + '"></div>' : ''))) + '</div>' +
+    '<div class="hbs-sec"><h3>창 종류 <small>켠 창만 AI에게 알려 줍니다</small></h3>' +
+      winCard('system', '시스템 메시지', '공지 · 시스템과의 대화 · 경고 · 오류 · 레벨업',
+        '<div class="hbs-f"><span class="l">미리보기</span><div class="hbs-chips">' + [['notice', '공지'], ['talk', '대화'], ['warn', '경고'], ['error', '오류'], ['levelup', e.status.grow === 'rank' ? '랭크업' : '레벨업']].map(function (x) {
+          return '<button type="button" class="hbs-chip" data-sysprev="' + x[0] + '" aria-pressed="' + ((ui.sysPrev || 'notice') === x[0]) + '">' + x[1] + '</button>';
+        }).join('') + '</div></div>') +
+      winCard('noti', '알림', '경험치, 아이템, 호감도처럼 짧은 변화') +
+      winCard('quest', '퀘스트', '목표 · 제한 시간 · 보상과 패널티 · 결과',
+        '<div class="hbs-f"><span class="l">수락 / 거절 버튼</span><div class="hbs-chips">' + chip('quest.btn', 'input', '입력창에 넣기') + chip('quest.btn', 'send', '바로 전송') + chip('quest.btn', 'off', '버튼 숨김') + '</div></div>') +
+      winCard('profile', '인물 창', '상대의 등급 · 능력치 · 호감도 · 현재 생각',
+        '<div class="hbs-f"><label for="hbs-pst">공통 능력치 (쉼표로 구분)</label><input id="hbs-pst" class="hbs-in" data-k="' + P_ + '.stats" value="' + h(e.profile.stats) + '"></div>' +
+        '<div class="hbs-chips">' + ck(P_ + '.uniq', '인물별 고유 능력치') + ck(P_ + '.aff', '호감도') + ck(P_ + '.mind', '현재 생각') + '</div>') +
+      winCard('shop', '상점', '포인트로 사는 아이템 목록') + '</div>' +
+    (pk ? '<div class="hbs-sec"><h3>새 창<small>이 팩에만 있는 창</small></h3>' + pk.cw.map(cwCard).join('') +
+      '<div class="hbs-newcw"><input class="hbs-in" id="pk-tag" placeholder="태그 (영문, 예: awaken)"><input class="hbs-in" id="pk-name" placeholder="이름 (예: 각성 창)">' +
+      '<button type="button" class="hbs-btn pri" data-act="pk-cwadd">+ 새 창 만들기</button></div></div>' : '');
 }
 /* long code is put into the editors after the HTML is built (attribute escaping would bloat it) */
 function fillCode(body) {
   body.querySelectorAll('textarea[data-k^="#"]').forEach(function (ta) { var v = getPath(CF, ta.dataset.k); ta.value = v == null ? '' : v; });
 }
-var PACK_GUIDE = '<div class="hbs-guide">' +
-  '<h4>1. 만들기</h4><p>[+ 커스텀 팩]을 누르면 지금 설정과 디자인으로 팩이 만들어지고, 이 채팅에 적용됩니다. 아래 "팩 편집"에서 고칩니다.</p>' +
-  '<h4>2. 창과 항목</h4><ul><li>기본 창: 켜기·끄기, 기본 항목 고르기, 항목 추가, 언제 띄울지 문장, 디자인을 고칩니다.</li>' +
-  '<li>새 창: 태그(영문)와 이름으로 만듭니다. 항목마다 종류(글자 · 게이지 · 숫자 · 목록)와 AI에게 줄 설명을 적습니다.</li>' +
-  '<li>기억 방식: <b>그때그때</b>는 나올 때마다 AI가 전부 적고, <b>누적</b>은 바뀐 값만 적으면 확장이 더해서 기억합니다.</li></ul>' +
-  '<h4>3. 디자인 (HTML 틀)</h4><pre>{{키}} 값 · {{키.label}} 항목 이름\n{{키.cur}} {{키.max}} {{키.pct}} 게이지 값\n{{키.1}} {{키.2}} "|"로 나눈 칸\n{{#키}} … {{/키}} 값이 있을 때만 (목록은 항목마다 반복, 안에서 {{.}} {{1}} {{2}})\n{{^키}} … {{/키}} 값이 없을 때만\n{{bar 키}} 막대 · {{grade 키}} 등급 · {{icon 이름}} 아이콘</pre>' +
-  '<p>창마다 [AI 요청문 복사]를 누르면 항목과 문법이 담긴 요청문이 복사됩니다. AI에게 붙여 넣고 원하는 디자인을 적으면 HTML 틀과 CSS를 받을 수 있습니다.</p>' +
-  '<h4>4. 배포</h4><p>[팩 내보내기]로 받은 zip을 나눠 주면, 받는 사람은 [zip 불러오기]로 넣습니다. id가 같으면 업데이트됩니다. 팩의 JS는 받는 사람 실리에서 그대로 실행되니, 믿을 수 있는 팩만 넣으세요.</p></div>';
 var PANELS = {
   main: function (c) {
-    var keys = Object.keys(S.presets), f = c.status.fields;
-    var picked = Object.keys(f).filter(function (k) { return f[k]; }).map(function (k) { return FIELD_NAMES[k]; });
+    var keys = Object.keys(S.presets);
     var p = PERSONA[c.persona] || PERSONA.neutral;
     return '' +
     /* presets */
@@ -2381,32 +2483,7 @@ var PANELS = {
           : '<p class="hbs-help">' + h(p[1]) + '</p>') + '</div>' +
       '<div class="hbs-f"><label for="hbs-world" style="display:flex">세계관 · 작가 노트<span class="hbs-cnt" id="hbs-wc"></span></label>' +
         '<textarea id="hbs-world" class="hbs-ta" data-k="world" maxlength="1200" placeholder="이 시스템이 어떤 이야기에 속하는지 짧게 적습니다. 비워 두면 봇 설정을 그대로 따릅니다. {{user}}, {{char}}를 쓸 수 있습니다.">' + h(c.world) + '</textarea>' + worldChips(c) + '</div></div>' +
-    /* with a custom pack the windows are set in the custom tab */
-    (EF.pack ? '<div class="hbs-sec"><h3>창 구성</h3><div class="hbs-note">커스텀 팩 "' + h(EF.pack.name) + '"을 쓰는 중입니다. 창과 항목은 커스텀 탭에서 고칩니다. <button type="button" class="hbs-btn ln" data-tabgo="design">커스텀 탭으로</button></div>' +
-      (EF.quest.on ? '<div class="hbs-f" style="margin-top:12px"><span class="l">퀘스트 수락 / 거절 버튼</span><div class="hbs-chips">' + chip('quest.btn', 'input', '입력창에 넣기') + chip('quest.btn', 'send', '바로 전송') + chip('quest.btn', 'off', '버튼 숨김') + '</div></div>' : '') + '</div>' : '') +
-    (EF.pack ? '' :
-    /* status window */
-    '<div class="hbs-sec"><h3>기본 상태창</h3><div class="hbs-card' + (c.status.on ? '' : ' off') + '">' + row('status.on', '상태창', '모든 AI 응답의 맨 위에 붙습니다.') +
-      (c.status.on ? '<div class="hbs-opt">' +
-        '<div class="hbs-f"><span class="l">성장 표시</span><div class="hbs-chips">' + chip('status.grow', 'lv', '레벨 · 경험치') + chip('status.grow', 'rank', '랭크 · 진행도') + '</div></div>' +
-        acc('fields', '표시할 항목', picked.length + '개 · ' + picked.join(', '),
-        '<div class="hbs-line"><span class="hbs-help">한 번에 고르기</span><button type="button" class="hbs-btn sm" data-act="fset" data-v="min">최소</button><button type="button" class="hbs-btn sm" data-act="fset" data-v="simple">심플</button><button type="button" class="hbs-btn sm" data-act="fset" data-v="full">전체</button></div>' +
-        '<div class="hbs-grp">' + FIELD_GROUPS.map(function (g) { return '<span>' + g[0] + '</span><div class="hbs-chips">' + g[1].map(function (x) { return ck('status.fields.' + x[0], x[1]); }).join('') + '</div>'; }).join('') + '</div>' +
-        (f.stat ? '<div class="hbs-f"><label for="hbs-stats">능력치 이름 (쉼표로 구분)</label><input id="hbs-stats" class="hbs-in" data-k="status.stats" value="' + h(c.status.stats) + '"></div>' : '')) + '</div>' +
-      '<div class="hbs-prev" data-prev="status"></div>' : '') + '</div></div>' +
-    /* other windows */
-    '<div class="hbs-sec"><h3>창 종류 <small>켠 창만 AI에게 알려 줍니다</small></h3>' +
-      card('system', '시스템 메시지', '공지 · 시스템과의 대화 · 경고 · 오류 · 레벨업',
-        '<div class="hbs-f"><span class="l">미리보기</span><div class="hbs-chips">' + [['notice', '공지'], ['talk', '대화'], ['warn', '경고'], ['error', '오류'], ['levelup', c.status.grow === 'rank' ? '랭크업' : '레벨업']].map(function (x) {
-          return '<button type="button" class="hbs-chip" data-sysprev="' + x[0] + '" aria-pressed="' + ((ui.sysPrev || 'notice') === x[0]) + '">' + x[1] + '</button>';
-        }).join('') + '</div></div>') +
-      card('noti', '알림', '경험치, 아이템, 호감도처럼 짧은 변화') +
-      card('quest', '퀘스트', '목표 · 제한 시간 · 보상과 패널티 · 결과',
-        '<div class="hbs-f"><span class="l">수락 / 거절 버튼</span><div class="hbs-chips">' + chip('quest.btn', 'input', '입력창에 넣기') + chip('quest.btn', 'send', '바로 전송') + chip('quest.btn', 'off', '버튼 숨김') + '</div></div>') +
-      card('profile', '인물 창', '상대의 등급 · 능력치 · 호감도 · 현재 생각',
-        '<div class="hbs-f"><label for="hbs-pst">공통 능력치 (쉼표로 구분)</label><input id="hbs-pst" class="hbs-in" data-k="profile.stats" value="' + h(c.profile.stats) + '"></div>' +
-        '<div class="hbs-chips">' + ck('profile.uniq', '인물별 고유 능력치') + ck('profile.aff', '호감도') + ck('profile.mind', '현재 생각') + '</div>') +
-      card('shop', '상점', '포인트로 사는 아이템 목록') + '</div>');
+    windowsSection();
   },
   /* the tracked status of this chat, editable: fixes what the AI got wrong or left out */
   state: function (c) {
@@ -2428,7 +2505,6 @@ var PANELS = {
       }).join('') + '</div>' + (empty ? '' : auditSection(c));
   },
   design: function (c) {
-    var p = curPack();
     return '<div class="hbs-sec"><h3>테마 · 커스텀 팩 <small>지금 연결된 설정에 적용됩니다</small></h3><div class="hbs-themes">' + themeList().map(function (t) {
       var on = c.theme === t.id;
       return '<div class="hbs-th' + (on ? ' on' : '') + '"><div class="pv" data-pv="' + h(t.id) + '"></div><div class="mt"><b>' + h(t.name) + (t.builtin ? '<span class="hbs-tag">기본</span>' : '') + (t.pack ? '<span class="hbs-tag">팩</span>' : '') + (on ? '<span class="hbs-tag">사용 중</span>' : '') + '</b>' +
@@ -2438,19 +2514,19 @@ var PANELS = {
         (t.builtin ? '' : '<button type="button" class="hbs-btn sm dng" data-act="th-del" data-id="' + h(t.id) + '">삭제</button>') + '</div></div>';
     }).join('') + '</div></div>' +
       '<div class="hbs-sec"><h3>추가</h3><div class="hbs-line"><button type="button" class="hbs-btn pri" data-act="pk-new">+ 커스텀 팩</button><button type="button" class="hbs-btn" data-act="th-imp">zip 불러오기</button><input type="file" id="hbs-file" accept=".zip,application/zip" hidden></div>' +
-      '<p class="hbs-help">커스텀 팩은 지금 설정과 디자인을 바탕으로 만들어집니다. 팩과 테마 zip은 같은 버튼으로 불러오고, 같은 id면 업데이트됩니다.</p>' +
-      acc('packhelp', '커스텀 팩 만드는 법', '창 · 항목 · 틀 문법 · 배포', PACK_GUIDE) +
-      acc('themehelp', '테마 만드는 법', 'zip 구성 · 색만 바꾸기 · 주의할 점', THEME_GUIDE) + '</div>' +
-      (p ? packEditor(p) : '');
+      acc('guide', '만드는 법', 'AI에게 맡기기 · zip 구성', GUIDE) + '</div>';
   },
   advanced: function (c) {
-    var text = buildPrompt(c, c.status.on ? currentState() : null);
+    var text = buildPrompt(EF, promptState(EF));
     return '<div class="hbs-sec"><h3>지침 넣는 위치</h3><div class="hbs-line" style="align-items:flex-start;gap:16px"><div class="hbs-f"><label for="hbs-depth">깊이 (0 = 맨 끝)</label><input id="hbs-depth" type="number" min="0" max="20" class="hbs-in hbs-num" data-k="adv.depth" value="' + (c.adv.depth | 0) + '"></div>' +
       '<div class="hbs-f"><span class="l">역할</span><div class="hbs-chips">' + chip('adv.role', 0, 'System') + chip('adv.role', 1, 'User') + chip('adv.role', 2, 'Assistant') + '</div></div></div></div>' +
       '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 응답의 창 접어 두기', '최근 3개 응답보다 오래된 창은 그리지 않고 코드로 접어 둡니다. 긴 채팅이 가벼워지고, AI에게는 그대로 보냅니다.') + '</div>' +
       '<div class="hbs-card">' + row('adv.strip', '지난 상태창을 AI에게 보내지 않기', '현재 상태를 따로 알려 주므로 지난 상태창은 AI가 읽는 내용에서 뺍니다. 토큰이 줄어듭니다.') + '</div></div>' +
       '<div class="hbs-sec"><h3>수첩</h3><div class="hbs-card">' + row('@book', '수첩 쓰기', '채팅에 나온 인물 창과 마지막 상점을 모아 봅니다. 모든 채팅에 똑같이 적용됩니다.') + '</div>' +
       (S.ui.book ? '<div class="hbs-f"><span class="l">버튼 위치</span><div class="hbs-chips">' + chip('@bookAt', 'wand', '마법봉 메뉴') + chip('@bookAt', 'input', '입력창 아이콘') + chip('@bookAt', 'float', '떠 있는 버튼') + '</div></div>' : '') + '</div>' +
+      (EF.pack ? '<div class="hbs-sec"><h3>커스텀 팩 CSS · JS<small>모든 창에 함께 적용</small></h3>' +
+        '<div class="hbs-f"><label>CSS</label><textarea class="hbs-ta code" data-k="#css" spellcheck="false" placeholder="모든 창에 쓰는 CSS"></textarea></div>' +
+        '<div class="hbs-f"><label>JS<small>선택 · HB.R / HB.B</small></label><textarea class="hbs-ta code" data-k="#js" spellcheck="false" placeholder="비워 두면 쓰지 않습니다."></textarea></div></div>' : '') +
       '<div class="hbs-sec"><h3>AI에게 보내는 지침 <small>지금 설정으로 만든 내용</small><span class="hbs-cnt">' + text.length + '자 · 약 ' + Math.round(text.length / 3.6) + ' 토큰</span></h3>' +
       (LINK.active ? '' : '<div class="hbs-note">이 채팅은 연결되어 있지 않아 지금은 이 지침을 보내지 않습니다.</div>') +
       '<textarea class="hbs-ta mono" readonly id="hbs-prompt">' + h(text) + '</textarea>' +
@@ -2459,35 +2535,15 @@ var PANELS = {
       '<p class="hbs-help">표시용 정규식 3개는 스크립트가 자동으로 설치하고 관리합니다. 정규식 목록에서 "시스템 상태창 ·"으로 시작하는 항목입니다.</p></div>';
   }
 };
-var THEME_GUIDE = '<div class="hbs-guide">' +
-  '<h4>1. 견본 받기</h4><p>위 테마 카드의 [zip 내보내기]를 누르면 지금 디자인 그대로의 견본 zip을 받습니다.</p>' +
-  '<h4>2. zip 구성</h4><ul>' +
-  '<li><code>theme.json</code> 필수. 테마 정보입니다.</li>' +
-  '<li><code>theme.css</code> 필수. 창 디자인입니다.</li>' +
-  '<li><code>theme.js</code> 선택. 창을 그리는 함수(<code>HB.R</code> / <code>HB.B</code>)를 덮어쓸 때만 넣습니다.</li></ul>' +
-  '<pre>{\n  "id": "my-theme",\n  "name": "내 테마",\n  "author": "이름",\n  "version": "1.0",\n  "description": "한 줄 소개",\n  "extends": "holo-blue",\n  "fonts": ["https://fonts.googleapis.com/css2?family=..."]\n}</pre>' +
-  '<p><code>id</code>는 영문 소문자, 숫자, <code>-</code>만 씁니다. <code>extends</code>를 적으면 그 테마 위에 내 CSS를 덧붙입니다. <code>fonts</code>에는 웹폰트 CSS 주소(https)를 넣습니다.</p>' +
-  '<h4>3. 색만 바꾸기</h4><p><code>extends</code>를 <code>"holo-blue"</code>로 두고 theme.css에 변수만 적으면 됩니다.</p>' +
-  '<pre>:host {\n  --hi: #ffd9a0;      /* 강조 글자 */\n  --cy: #ffb14a;      /* 아이콘 · 선 */\n  --line: rgba(255,190,110,.34);\n  --panel-a: rgba(46,28,10,.93); /* 창 위쪽 */\n  --panel-b: rgba(24,14,5,.96);  /* 창 아래쪽 */\n  --txt: #fff1dc;  --dim: #cbb090;\n}</pre>' +
-  '<h4>4. 주의할 점</h4><ul>' +
-  '<li>창은 섀도 DOM 안에 그려집니다. 변수는 <code>:root</code>가 아니라 <code>:host</code>에 적습니다.</li>' +
-  '<li>좁은 화면 대응은 <code>@media</code> 대신 <code>@container hb (max-width:540px)</code>를 씁니다.</li>' +
-  '<li>창 종류별 바깥 클래스: 상태창 <code>.st</code>, 시스템 <code>.sys .talk .warn .err .lvup</code>, 알림 <code>.toast .t</code>, 인물 <code>.ch-top .slist</code>, 상점 <code>.item</code></li>' +
-  '<li>견본 테마 <b>Amber Terminal</b>이 색만 바꾼 예입니다.</li></ul>' +
-  '<h4>5. AI에게 맡길 때</h4><p>견본 zip의 theme.css를 첨부하고 아래 글을 붙여 넣은 뒤, 마지막 줄에 원하는 디자인을 적습니다.</p>' +
-  '<pre class="hbs-copy">첨부한 theme.css는 SillyTavern "시스템 상태창" 확장의 창 디자인이다. 이걸 고쳐서 새 테마를 만들어 줘.\n\n' +
-  '규칙:\n' +
-  '- 결과물은 theme.json과 theme.css 두 파일. zip에 바로 넣을 수 있게 각각 전체 내용을 줘.\n' +
-  '- theme.json: {"id":"영문소문자-숫자-하이픈","name":"","author":"","version":"1.0","description":"","fonts":[]}\n' +
-  '- 창은 섀도 DOM 안에 그려진다. CSS 변수는 :host에 선언하고, :root·body·html 선택자는 쓰지 마.\n' +
-  '- 좁은 화면은 @media 대신 @container hb (max-width:540px) 로 처리해.\n' +
-  '- HTML 구조와 클래스 이름은 바꿀 수 없다. 첨부한 CSS에 나온 클래스만 꾸며.\n' +
-  '- 웹폰트는 @import 대신 theme.json의 fonts에 https CSS 주소로 넣어.\n' +
-  '- 글자가 배경에 묻히지 않게 대비를 충분히 주고, 폰 화면(폭 360px)에서도 깨지지 않게 해.\n' +
-  '- 애니메이션은 지금 있는 것만 고치고, 정보를 가리거나 깜빡여서 읽기 힘들게 하지 마.\n\n' +
-  '원하는 디자인: (여기에 적기. 예: 낡은 양피지 느낌, 갈색 잉크, 세리프 폰트)</pre>' +
-  '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="copy-guide">프롬프트 복사</button></div>' +
-  '<p>색만 바꾸고 싶으면 "theme.json에 "extends": "holo-blue"를 넣고, theme.css에는 :host 변수만 적어 줘"라고 덧붙이면 결과가 짧고 안전합니다.</p></div>';
+var GUIDE = '<div class="hbs-guide">' +
+  '<h4>커스텀 팩</h4><p>기본 테마 대신 커스텀 팩을 적용하면, 설정 탭의 창마다 항목 추가 · 언제 띄울지 · 디자인 코드가 열리고 새 창도 만들 수 있습니다. 팩 전체 CSS · JS는 고급 탭에 있습니다.</p>' +
+  '<h4>만들기</h4><p>[+ 커스텀 팩]을 누르면 지금 설정과 디자인으로 팩이 만들어지고 바로 적용됩니다.</p>' +
+  '<h4>AI에게 맡기기</h4><p>카드의 [zip 내보내기]로 받은 zip을 AI에게 첨부하고, 아래 지시문 끝에 원하는 것을 적어 보냅니다. 규칙과 문법은 zip 안의 <code>README-AI.md</code>에 모두 들어 있습니다.</p>' +
+  '<pre class="hbs-copy">첨부한 zip은 SillyTavern "시스템 상태창" 확장의 커스텀 팩이다. 안에 있는 README-AI.md를 먼저 끝까지 읽고, 그 규칙대로 팩을 고쳐서 새 팩 zip을 만들어 줘. id는 새로 정해.\n\n원하는 것: (예: 무협 세계관. 내공 게이지와 문파 기여도를 추가하고, 먹물 종이 느낌으로 디자인)</pre>' +
+  '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="copy-guide">지시문 복사</button></div>' +
+  '<p>받은 zip은 [zip 불러오기]로 넣습니다. id가 같으면 업데이트됩니다.</p>' +
+  '<h4>zip 구성</h4><ul><li><code>theme.json</code> 팩 정보와 창 설정</li><li><code>theme.css</code> 모든 창에 쓰는 CSS · <code>theme.js</code> 선택</li><li><code>windows/창이름.html</code> · <code>.css</code> 창별 디자인</li></ul>' +
+  '<h4>나눠 줄 때</h4><p>팩의 JS는 받는 사람 실리에서 그대로 실행됩니다. 믿을 수 있는 팩만 넣으세요.</p></div>';
 var TABS = [['main', '설정'], ['state', '상태'], ['design', '커스텀'], ['advanced', '고급']];
 
 function linkBar() {
@@ -2576,7 +2632,7 @@ function ask(msg, okLabel) {
   });
 }
 var ACTIONS = {
-  fset: function (b) { var set = FIELD_SETS[b.dataset.v], f = CF.status.fields; Object.keys(f).forEach(function (k) { f[k] = set.indexOf(k) > -1 ? 1 : 0; }); commit(true); },
+  fset: function (b) { var set = FIELD_SETS[b.dataset.v], pk = curPack(), f = pk ? pk.win.status.fields : CF.status.fields; Object.keys(f).forEach(function (k) { f[k] = set.indexOf(k) > -1 ? 1 : 0; }); packBump(pk ? '#' : ''); commit(true); },
   'th-use': function (b) { CF.theme = b.dataset.id; commit(true); },
   'th-exp': function (b) { exportTheme(b.dataset.id); },
   'th-del': function (b) {
@@ -2611,11 +2667,6 @@ var ACTIONS = {
     if (!w) return;
     function put() { w.html = defaultHtml(w); packBump('#'); commit(true); }
     if (trimS(w.html)) ask('지금 HTML 틀을 기본 틀로 바꾸시겠습니까?', '바꾸기').then(function (ok) { if (ok) put(); }); else put();
-  },
-  'pk-ai': function (b) {
-    var t = aiPrompt(b.dataset.kind || null, b.dataset.tag || null);
-    (P.navigator.clipboard ? P.navigator.clipboard.writeText(t) : Promise.reject()).then(function () { b.textContent = '복사됨'; toast('요청문을 복사했습니다. AI에게 붙여 넣고 원하는 디자인을 적으세요.', 'success'); },
-      function () { toast('복사하지 못했습니다. 브라우저가 클립보드를 막고 있습니다.', 'warning'); });
   },
   'ps-save': function () {
     var n = trimS(ui.el.querySelector('#hbs-pname').value);
@@ -2764,7 +2815,16 @@ function openSettings() {
     /* pack editor: typed text is kept at once, the windows catch up when typing pauses */
     if (t.dataset && t.dataset.k && t.dataset.k.charAt(0) === '#' && t.type !== 'checkbox') {
       var pv2 = t.value;
-      if (/\.k$/.test(t.dataset.k)) { pv2 = pv2.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24); if (pv2 !== t.value) t.value = pv2; }
+      if (/\.k$/.test(t.dataset.k)) {
+        pv2 = pv2.toLowerCase().replace(/[^a-z0-9_]/g, '').slice(0, 24); if (pv2 !== t.value) t.value = pv2;
+        /* mark the key at once: wrong form, a built-in key, or one used twice in this list */
+        var fl = t.closest('.hbs-fl'), kind = (t.dataset.k.match(/^#win\.(\w+)\.extra/) || [])[1], own = kind ? OWN_KEYS[kind] || [] : [], keys = {};
+        fl.querySelectorAll('.hbs-frow').forEach(function (r) { var v = r.querySelector('.k').value; if (v) keys[v] = (keys[v] || 0) + 1; });
+        fl.querySelectorAll('.hbs-frow').forEach(function (r) { var v = r.querySelector('.k').value; r.classList.toggle('bad', !!v && (!KEY_RE.test(v) || own.indexOf(v) > -1 || keys[v] > 1)); });
+        var warn = fl.querySelector('.hbs-help.warn'), anyBad = !!fl.querySelector('.hbs-frow.bad');
+        if (anyBad && !warn) fl.querySelector('[data-act="pk-fadd"]').insertAdjacentHTML('beforebegin', '<p class="hbs-help warn">빨간 키를 확인하세요. 영문 소문자로 시작하고, 다른 항목과 겹치면 안 됩니다.</p>');
+        if (!anyBad && warn) warn.remove();
+      }
       setPath(CF, t.dataset.k, pv2); save();
       clearTimeout(ui.pkT);
       ui.pkT = setTimeout(function () { if (!ui.el) return; packBump('#'); applyAll(); body.querySelectorAll('[data-prev]').forEach(function (el) { drawPrev(el, EF); }); }, 450);
