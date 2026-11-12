@@ -1672,7 +1672,7 @@ function numify(o) {
 /* fill in whatever a pack (old, hand-written or imported) leaves out */
 function normPack(p) {
   var base = merge(DEF, {}), src = p.win && typeof p.win === 'object' ? p.win : {}, seen = {};
-  p.pack = 1; p.rev = p.rev | 0; p.win = {};
+  p.pack = 1; p.rev = p.rev | 0; p.win = {}; delete p.author;   /* no maker's name: packs are shared anonymously */
   WIN_KINDS.forEach(function (k) {
     var s = src[k] && typeof src[k] === 'object' ? numify(src[k]) : {}, w = merge(winFrom(k, base), s);
     w.extra = (Array.isArray(s.extra) ? s.extra : []).map(normField);
@@ -1694,7 +1694,7 @@ function newPack(c) {
   var t = getTheme(c.theme), id = 'pack-' + Date.now().toString(36), p;
   if (t.pack) { p = clone(t); p.name = t.name + ' (복사본)'; }
   else {
-    p = { name: '내 커스텀 팩', author: '', version: '1.0', description: '', fonts: [], css: '', extends: t.id, win: {}, cw: [] };
+    p = { name: '내 커스텀 팩', version: '1.0', description: '', fonts: [], css: '', extends: t.id, win: {}, cw: [] };
     WIN_KINDS.forEach(function (k) { p.win[k] = winFrom(k, c); });
   }
   p.id = id; delete p.builtin; p.rev = 0;
@@ -1857,7 +1857,7 @@ function packSections(c, st) {
 /* every zip carries settings and design: a plain theme is exported as a pack with the current chat's windows */
 function packOf(t) {
   if (t.pack) return t;
-  var p = { id: t.builtin ? t.id + '-custom' : t.id, name: t.builtin ? t.name + ' 커스텀' : t.name, author: t.author || '', version: t.version || '1.0', description: t.description || '', fonts: t.fonts || [], win: {}, cw: [] };
+  var p = { id: t.builtin ? t.id + '-custom' : t.id, name: t.builtin ? t.name + ' 커스텀' : t.name, version: t.version || '1.0', description: t.description || '', fonts: t.fonts || [], win: {}, cw: [] };
   if (t.builtin) { p.extends = t.id; p.css = ''; }
   else { p.css = t.css || ''; if (t.js) p.js = t.js; if (t.extends) p.extends = t.extends; }
   WIN_KINDS.forEach(function (k) { p.win[k] = winFrom(k, EF); });
@@ -1866,7 +1866,7 @@ function packOf(t) {
 function exportPack(t) {
   t = packOf(t);
   var meta = clone(t), files = {};
-  delete meta.css; delete meta.js; delete meta.rev; delete meta.builtin;
+  delete meta.css; delete meta.js; delete meta.rev; delete meta.builtin; delete meta.author;
   WIN_KINDS.forEach(function (k) {
     var w = meta.win[k];
     if (trimS(w.html)) files['windows/' + k + '.html'] = w.html;
@@ -1937,7 +1937,7 @@ function aiGuide(t) {
     '```json',
     '{',
     '  "id": "my-pack",            // 영문 소문자 · 숫자 · - 만',
-    '  "name": "팩 이름", "author": "", "version": "1.0", "description": "한 줄 소개",',
+    '  "name": "팩 이름", "version": "1.0", "description": "한 줄 소개",',
     '  "extends": "holo-blue",     // 바탕 디자인. 이 위에 theme.css와 창 CSS가 덧붙는다',
     '  "fonts": ["https://fonts.googleapis.com/css2?family=..."],',
     '  "pack": 1,',
@@ -2533,7 +2533,7 @@ function download(name, blob) {
 
 function exportTheme(id) {
   if (getTheme(id).pack) { exportPack(getTheme(id)); return; }
-  var t = getTheme(id), meta = { id: t.builtin ? t.id + '-copy' : t.id, name: t.builtin ? t.name + ' (복사본)' : t.name, author: t.author || '', version: t.version || '1.0', description: t.description || '', fonts: t.fonts || [] };
+  var t = getTheme(id), meta = { id: t.builtin ? t.id + '-copy' : t.id, name: t.builtin ? t.name + ' (복사본)' : t.name, version: t.version || '1.0', description: t.description || '', fonts: t.fonts || [] };
   if (t.extends) meta.extends = t.extends;
   var files = { 'theme.json': JSON.stringify(meta, null, 2), 'theme.css': t.css || '' };
   if (t.js) files['theme.js'] = t.js;
@@ -2552,7 +2552,7 @@ function importTheme(file) {
     var fonts = Array.isArray(m.fonts) ? m.fonts.filter(function (u) { return /^https:\/\//.test(u); }) : [];
     css = css.replace(/@import\s+(?:url\()?\s*["']?([^"')\s;]+)["']?\s*\)?[^;]*;/gi, function (all, u) { if (/^https:\/\//.test(u)) fonts.push(u); return ''; });
     var update = !!S.themes[id];
-    S.themes[id] = { id: id, name: String(m.name || id), author: String(m.author || ''), version: String(m.version || ''), description: String(m.description || ''), fonts: fonts, css: css };
+    S.themes[id] = { id: id, name: String(m.name || id), version: String(m.version || ''), description: String(m.description || ''), fonts: fonts, css: css };
     if (m.extends) S.themes[id].extends = String(m.extends);
     if (js) S.themes[id].js = js;
     /* a custom pack: its windows, fields and window files (windows/<name>.html / .css) */
@@ -2701,7 +2701,7 @@ function windowsSection() {
   var e = EF, pk = e.pack, f = e.status.fields, S_ = wpath('status'), P_ = wpath('profile');
   var picked = Object.keys(f).filter(function (k) { return f[k]; }).map(function (k) { return FIELD_NAMES[k]; });
   return (pk ? '<div class="hbs-sec"><h3>커스텀 팩<small>이 팩을 쓰는 모든 채팅에 함께 적용됩니다</small></h3><div class="hbs-stgrid">' +
-      [['name', '이름'], ['author', '제작자'], ['version', '버전'], ['description', '설명']].map(function (x) {
+      [['name', '이름'], ['version', '버전'], ['description', '설명']].map(function (x) {
         return '<div class="hbs-f"><label>' + x[1] + '</label><input class="hbs-in" data-k="#' + x[0] + '" value="' + h(pk[x[0]] || '') + '"></div>';
       }).join('') + '</div></div>' : '') +
     '<div class="hbs-sec"><h3>기본 상태창</h3>' + winCard('status', '상태창', '모든 AI 응답의 맨 위에 붙습니다.',
@@ -2784,7 +2784,7 @@ var PANELS = {
     return '<div class="hbs-sec"><h3>테마 · 커스텀 팩 <small>지금 연결된 설정에 적용됩니다</small></h3><div class="hbs-themes">' + themeList().map(function (t) {
       var on = c.theme === t.id;
       return '<div class="hbs-th' + (on ? ' on' : '') + '"><div class="pv" data-pv="' + h(t.id) + '"></div><div class="mt"><b>' + h(t.name) + (t.builtin ? '<span class="hbs-tag">기본</span>' : '') + (t.pack ? '<span class="hbs-tag">커스텀</span>' : '') + (on ? '<span class="hbs-tag">사용 중</span>' : '') + '</b>' +
-        '<span>' + h(t.description || (t.author ? '제작: ' + t.author : '')) + '</span></div><div class="ac">' +
+        '<span>' + h(t.description || '') + '</span></div><div class="ac">' +
         '<button type="button" class="hbs-btn sm' + (on ? '' : ' pri') + '" data-act="th-use" data-id="' + h(t.id) + '"' + (on ? ' disabled' : '') + '>' + (on ? '적용됨' : '적용') + '</button>' +
         '<button type="button" class="hbs-btn sm" data-act="th-exp" data-id="' + h(t.id) + '">zip 내보내기</button>' +
         (t.builtin ? '' : '<button type="button" class="hbs-btn sm dng" data-act="th-del" data-id="' + h(t.id) + '">삭제</button>') + '</div></div>';
