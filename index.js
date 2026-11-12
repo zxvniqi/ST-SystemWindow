@@ -851,6 +851,8 @@ HB.R.pending = function () {
 HB.hv = function (d, k) { var v = HB.one(d, k); return HB.isNone(v) ? '' : v; };
 /* list items: one per line or ";"-separated, empty ones dropped */
 HB.lines = function (d, k) { return HB.all(d, k).filter(function (s) { return !HB.isNone(s); }); };
+/* a rank change that is really no change ("-", "0", "▲0") shows nothing */
+HB.chg = function (s) { s = trimS(s || ''); return /^([-–—]|[▲▼↑↓+-]?\s*0)?$/.test(s) ? '' : s; };
 HB.gk = function (s) { var g = HB.grade(s); return g ? g.c : 'g-x'; };
 HB.hex = function (s, lab) {
   var g = HB.grade(s), t = g ? g.t : trimS(s || '') || '?';
@@ -916,7 +918,7 @@ HB.R.awaken = function (d) {
     '<div class="aw-tags">' + H.lines(d, 'trait').map(function (x) { return '<span class="chip buff">' + H.esc(x) + '</span>'; }).join('') + '</div>' + H.ext(d, 'awaken') + '</div></div>';
 };
 HB.R.license = function (d) {
-  var H = HB, v = function (k) { return H.hv(d, k); }, r = H.fields(v('ranking')), ch = r[1] || '';
+  var H = HB, v = function (k) { return H.hv(d, k); }, r = H.fields(v('ranking')), ch = H.chg(r[1]);
   return '<div class="win lc">' + H.hd('status', T('license'), 'License') + '<div class="bd lc-bd">' + H.hex(v('rank') || '?', 'HUNTER') +
     '<div class="lc-info"><b class="lc-name">' + H.esc(v('name')) + '</b>' + (v('class') ? '<span>' + H.esc(v('class')) + '</span>' : '') +
     '<dl><dt>' + T('lcGuild') + '</dt><dd>' + H.esc(v('guild') || T('noGuild')) + '</dd>' +
@@ -926,7 +928,7 @@ HB.R.license = function (d) {
 };
 HB.R.guild = function (d) {
   /* a guild is placed by its ranking (place|change); an old block's grade still shows as a chip */
-  var H = HB, v = function (k) { return H.hv(d, k); }, c = H.frac(v('contrib')), mem = H.lines(d, 'member'), r = H.fields(v('rank')), ch = r[1] || '';
+  var H = HB, v = function (k) { return H.hv(d, k); }, c = H.frac(v('contrib')), mem = H.lines(d, 'member'), r = H.fields(v('rank')), ch = H.chg(r[1]);
   var rk = r[0] ? '<span class="gd-rk">' + H.esc(r[0]) + (ch ? '<em class="' + (/^[▼↓]/.test(ch) ? 'dn' : /^[▲↑+]/.test(ch) ? 'up' : '') + '">' + H.esc(ch) + '</em>' : '') + '</span>' : '';
   return '<div class="win">' + H.hd('medal', T('guild'), 'Guild', !r[0] && v('grade') ? H.gtag(v('grade')) : '') + '<div class="bd">' +
     (v('name') || rk ? '<div class="gd-name"><b>' + H.esc(v('name')) + '</b>' + rk + '</div>' : '') +
@@ -1303,8 +1305,8 @@ function hunterSections(c, W) {
   sec('clear', 'Dungeon Clear Window', 'gate: cleared gate name\nrank: evaluation grade\ncontrib: {{user}}\'s contribution %\nloot: item|rarity|qty, one per line\nexp: EXP gained\npoint: points gained',
     'Rarity: ' + W.rar + '.');
   sec('awaken', 'Awakening Window', 'who: name\nrank: awakening grade\nclass: class name\npower: what the power does, one sentence\ntrait: ability with grade, one per line, 1-4 lines');
-  sec('license', 'Hunter License Window', 'rank: hunter grade\nname: holder\nclass: class\nguild: guild, or none\nranking: national rank|change since last time (▲n or ▼n)\ngates: gates cleared');
-  sec('guild', 'Guild Window', 'name: guild name\nrank: the guild\'s national ranking|change since last time (▲n or ▼n)\ncontrib: {{user}}\'s contribution points in the guild\nmember: name|role|hunter grade, one per line, up to 4 key members');
+  sec('license', 'Hunter License Window', 'rank: hunter grade\nname: holder\nclass: class\nguild: guild, or none\nranking: national rank|change since last time (▲n or ▼n; leave it empty if unchanged)\ngates: gates cleared');
+  sec('guild', 'Guild Window', 'name: guild name\nrank: the guild\'s national ranking|change since last time (▲n or ▼n; leave it empty if unchanged)\ncontrib: {{user}}\'s contribution points in the guild\nmember: name|role|hunter grade, one per line, up to 4 key members');
   sec('party', 'Party Window', 'me: {{user}}\nmember: name|class · role|hp cur/max|mp cur/max|status effect or none, one line per member');
   sec('ranking', 'Ranking Window', 'title: ranking name\nme: {{user}}\nrow: place|name|grade|change (▲n, ▼n or -), one per line',
     'Rows: the top 3, then the rows around {{user}}.');
