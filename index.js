@@ -1244,7 +1244,7 @@ function buildPrompt(c, st) {
   if (!any) return '';
   var rank = c.status.grow === 'rank';
   var usesGrade = (c.status.on && (f.stat || (rank && f.lv))) || c.profile.on || c.quest.on || HUNTER.some(function (k) { return c[k].on; });
-  var rules = '[System Window Rules]\n{{user}} alone sees a game-like System. Its windows are tagged blocks in the formats below, each placed where it happens in the story. ' +
+  var rules = '[System Window Rules]\nA game-like System appears in this story; who else can see it follows the setting. Its windows are tagged blocks in the formats below, each placed where it happens in the story. ' +
     'One "key: value" per line; omit lines that don\'t apply. ";" separates list items, "|" separates fields. Keys stay in English; values in ' + W.lang + '.';
   if (usesGrade) rules += '\n' + gradeLine(c);
   /* restraint without numbers: windows appear only where the story naturally calls for them */
