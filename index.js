@@ -897,7 +897,7 @@ var DEF = {
   lang: 'ko', persona: 'neutral', personaCustom: '', world: '', theme: 'holo-blue',
   status: { on: true, freq: 'always', grow: 'lv', stats: '근력, 민첩, 체력, 지능, 감각, 행운',
     fields: { date: 1, time: 1, loc: 1, weather: 0, name: 1, lv: 1, role: 0, title: 0, exp: 0, hp: 1, mp: 1, fat: 0, fx: 1, quest: 0, money: 1, point: 0, sp: 0, stat: 0, inv: 0, skill: 0 } },
-  system: { on: true }, noti: { on: true },
+  system: { on: true, types: { notice: 1, talk: 1, warn: 1, error: 1, levelup: 1 } }, noti: { on: true },
   quest: { on: true, btn: 'input' },
   profile: { on: true, stats: '근력, 민첩, 지능, 매력', uniq: 1, aff: 1, mind: 1 },
   shop: { on: false },
@@ -1012,6 +1012,9 @@ var WORDS = {
   ja: { lang: 'Japanese', rar: 'コモン/レア/エピック/レジェンド', qtype: '通常/緊急/隠し/デイリー/メイン', equip: '装備' },
   auto: { lang: "the story's language", rar: 'common/rare/epic/legendary (translated)', qtype: 'normal/urgent/hidden/daily/main (translated)', equip: 'equipped' }
 };
+/* the system message kinds in use (at least one) */
+var SYS_TYPES = ['notice', 'talk', 'warn', 'error', 'levelup'];
+function sysTypes(c) { var t = (c.system && c.system.types) || {}, on = SYS_TYPES.filter(function (k) { return t[k]; }); return on.length ? on : ['notice']; }
 /* settings name -> the state keys it tracks */
 function statusKeys(c) {
   var f = c.status.fields, rank = c.status.grow === 'rank', keys = [];
@@ -1096,9 +1099,14 @@ function buildPrompt(c, st) {
   if (sp) out.push(sp);
   if (c.system.on || c.noti.on) {
     var sm = '';
-    if (c.system.on) sm += '[System Messages]\n' + whenOf(c, 'system') + ':\n<system>\ntype: notice/talk/warn/error/levelup\ntext: main line\nsub: second line, only if needed' + extraLines(c, 'system') + '\n</system>\n' +
-      'talk = answering {{user}}; warn = danger or deadline; error = malfunction or forbidden truth (hide words with ███; optional "log: action|OK or FAIL" lines); levelup text = ' +
-      (c.status.grow === 'rank' ? '"RANK a → b"' : '"LV.a → LV.b"') + '.';
+    if (c.system.on) {
+      /* only the kinds the user kept are offered */
+      var ty = sysTypes(c), TYD = { talk: 'talk = answering {{user}}', warn: 'warn = danger or deadline',
+        error: 'error = malfunction or forbidden truth (hide words with ███; optional "log: action|OK or FAIL" lines)', levelup: 'levelup text = ' + (c.status.grow === 'rank' ? '"RANK a → b"' : '"LV.a → LV.b"') };
+      var tyd = ty.filter(function (k) { return TYD[k]; }).map(function (k) { return TYD[k]; });
+      sm += '[System Messages]\n' + whenOf(c, 'system') + ':\n<system>\ntype: ' + ty.join('/') + '\ntext: main line\nsub: second line, only if needed' + extraLines(c, 'system') + '\n</system>' +
+        (tyd.length ? '\n' + tyd.join('; ') + '.' : '');
+    }
     if (c.noti.on) sm += (sm ? '\n' : '') + '[System Notifications]\n' + whenOf(c, 'noti') + (c.system.on ? ' (these go here, not in <system>)' : '') + ':\n<noti>\nexp/skill/title/item/aff/stat/quest/money: what|change' + extraLines(c, 'noti') + '\n</noti>';
     out.push(sm);
   }
@@ -1447,6 +1455,7 @@ function winFrom(kind, c) {
   var w = { on: c[kind].on ? 1 : 0, when: '', extra: [], html: '', css: '' };
   if (kind === 'status') { w.grow = c.status.grow; w.stats = c.status.stats; w.fields = clone(c.status.fields); }
   if (kind === 'profile') { w.stats = c.profile.stats; w.uniq = c.profile.uniq; w.aff = c.profile.aff; w.mind = c.profile.mind; }
+  if (kind === 'system') w.types = clone(c.system.types || DEF.system.types);
   return w;
 }
 /* hand-written packs may say true / false where the settings keep 1 / 0 */
@@ -1495,6 +1504,7 @@ function effective(c, pk) {
   WIN_KINDS.forEach(function (k) { e[k].on = !!t.win[k].on; });
   e.status.grow = ws.grow; e.status.stats = ws.stats; e.status.fields = clone(ws.fields);
   e.profile.stats = wp.stats; e.profile.uniq = wp.uniq; e.profile.aff = wp.aff; e.profile.mind = wp.mind;
+  e.system.types = clone(t.win.system.types);
   e.pack = t;
   return e;
 }
@@ -1732,7 +1742,8 @@ function aiGuide(t) {
     '  - `label`: 화면에 보이는 이름.',
     '',
     'status만: `grow` ("lv" 레벨 또는 "rank" 랭크) · `stats` 능력치 이름(쉼표 구분) · `fields` 기본 항목 켜기/끄기 `{"date":1,"time":1,…}`',
-    'profile만: `stats` 공통 능력치(쉼표 구분) · `uniq` 고유 능력치 · `aff` 호감도 · `mind` 속마음 (각각 1/0)', '',
+    'profile만: `stats` 공통 능력치(쉼표 구분) · `uniq` 고유 능력치 · `aff` 호감도 · `mind` 속마음 (각각 1/0)',
+    'system만: `types` 쓸 종류 `{"notice":1,"talk":1,"warn":1,"error":1,"levelup":1}` (0이면 그 종류는 쓰지 않는다)', '',
     '기본 창의 키 (AI가 채팅에 쓰는 값):');
   WIN_KINDS.forEach(function (k) { L.push('- **' + k + '** (' + WIN_NAME[k] + '): ' + KEY_NOTE[k]); });
   L.push('', '### cw: 새 창', '',
@@ -2442,6 +2453,15 @@ function cwCard(w, i) {
     '<div class="hbs-line"><button type="button" class="hbs-btn sm" data-act="pk-tpl" data-i="' + i + '">기본 틀을 코드에 넣기</button><span class="hbs-sp"></span><button type="button" class="hbs-btn sm dng" data-act="pk-cwdel" data-i="' + i + '">이 창 삭제</button></div>' +
     '</div>' + (w.on ? '<div class="hbs-prev" data-prev="' + h(w.tag) + '"></div>' : '') + '</div>';
 }
+/* system messages: which kinds the AI may use, and a preview of each kind in use */
+function sysOpts(e) {
+  var names = { notice: '공지', talk: '대화', warn: '경고', error: '오류', levelup: e.status.grow === 'rank' ? '랭크업' : '레벨업' }, on = sysTypes(e);
+  if (on.indexOf(ui.sysPrev || 'notice') < 0) ui.sysPrev = on[0];
+  return '<div class="hbs-f"><span class="l">쓸 종류</span><div class="hbs-chips">' + SYS_TYPES.map(function (k) { return ck(wpath('system') + '.types.' + k, names[k]); }).join('') + '</div></div>' +
+    '<div class="hbs-f"><span class="l">미리보기</span><div class="hbs-chips">' + on.map(function (k) {
+      return '<button type="button" class="hbs-chip" data-sysprev="' + k + '" aria-pressed="' + ((ui.sysPrev || 'notice') === k) + '">' + names[k] + '</button>';
+    }).join('') + '</div></div>';
+}
 function windowsSection() {
   var e = EF, pk = e.pack, f = e.status.fields, S_ = wpath('status'), P_ = wpath('profile');
   var picked = Object.keys(f).filter(function (k) { return f[k]; }).map(function (k) { return FIELD_NAMES[k]; });
@@ -2456,10 +2476,7 @@ function windowsSection() {
         '<div class="hbs-grp">' + FIELD_GROUPS.map(function (g) { return '<span>' + g[0] + '</span><div class="hbs-chips">' + g[1].map(function (x) { return ck(S_ + '.fields.' + x[0], x[1]); }).join('') + '</div>'; }).join('') + '</div>' +
         (f.stat ? '<div class="hbs-f"><label for="hbs-stats">능력치 이름 (쉼표로 구분)</label><input id="hbs-stats" class="hbs-in" data-k="' + S_ + '.stats" value="' + h(e.status.stats) + '"></div>' : ''))) + '</div>' +
     '<div class="hbs-sec"><h3>창 종류 <small>켠 창만 AI에게 알려 줍니다</small></h3>' +
-      winCard('system', '시스템 메시지', '공지 · 시스템과의 대화 · 경고 · 오류 · 레벨업',
-        '<div class="hbs-f"><span class="l">미리보기</span><div class="hbs-chips">' + [['notice', '공지'], ['talk', '대화'], ['warn', '경고'], ['error', '오류'], ['levelup', e.status.grow === 'rank' ? '랭크업' : '레벨업']].map(function (x) {
-          return '<button type="button" class="hbs-chip" data-sysprev="' + x[0] + '" aria-pressed="' + ((ui.sysPrev || 'notice') === x[0]) + '">' + x[1] + '</button>';
-        }).join('') + '</div></div>') +
+      winCard('system', '시스템 메시지', '공지 · 시스템과의 대화 · 경고 · 오류 · 레벨업', sysOpts(e)) +
       winCard('noti', '알림', '경험치, 아이템, 호감도처럼 짧은 변화') +
       winCard('quest', '퀘스트', '목표 · 제한 시간 · 보상과 패널티 · 결과',
         '<div class="hbs-f"><span class="l">수락 / 거절 버튼</span><div class="hbs-chips">' + chip('quest.btn', 'input', '입력창에 넣기') + chip('quest.btn', 'send', '바로 전송') + chip('quest.btn', 'off', '버튼 숨김') + '</div></div>') +
