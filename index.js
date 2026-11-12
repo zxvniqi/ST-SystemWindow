@@ -1306,12 +1306,16 @@ function hunterSections(c, W) {
   sec('ranking', 'Ranking Window', 'title: ranking name\nme: {{user}}\nrow: place|name|grade|change (▲n, ▼n or -), one per line',
     'Rows: the top 3, then the rows around {{user}}.');
   var ct = subTypes(c, 'chat'), room = ct.indexOf('room') > -1, cmt = ct.indexOf('comment') > -1;
-  sec('chat', 'Chat Window', 'title: ' + (room && cmt ? 'chat room, board or post name' : room ? 'chat room name' : 'board or post name') + '\nme: {{user}}\'s name there' +
-    (room ? '\nsys: a system line (someone joined, etc.)' : '') +
-    '\nmsg: ' + (room && cmt ? 'name|grade or badge|time or ▲likes|message' : room ? 'name|grade or badge|time|message' : 'name|badge|▲likes|comment') +
+  /* room = a chat channel the System itself shows; comment = readers outside the story, reading it as a web novel */
+  var ct = subTypes(c, 'chat'), room = ct.indexOf('room') > -1, cmt = ct.indexOf('comment') > -1;
+  sec('chat', 'Chat Window', 'title: ' + (room && cmt ? 'channel name, or the chapter the readers are commenting on' : room ? 'channel name' : 'the chapter the readers are commenting on') +
+    (room ? '\nme: {{user}}\'s name in the channel\nsys: a channel notice (someone joined, etc.)' : '') +
+    '\nmsg: ' + (room && cmt ? 'name|grade or badge|time or ▲likes|message' : room ? 'name|grade or badge|time|message' : 'reader nickname||▲likes|comment') +
     (cmt ? '\nbest: same as msg, for a top comment' : ''),
+    (room ? 'Channel: a chat window the System shows (guild channel, party channel, a network the System runs); ordinary phone texting stays in the prose. ' : '') +
+    (cmt ? 'Comments: readers outside the story reacting to it as a web novel they are reading, beyond the fourth wall; the characters cannot see them unless the setting says so. ' : '') +
     'Lines in the order they appear, 3-8 of them; leave empty fields empty but keep the "|".',
-    own('chat') || (room && cmt ? '' : room ? 'When a group chat, guild chat or messenger conversation appears in the story' : 'When online reactions (comments, posts) to the story\'s events appear'));
+    own('chat') || (room && cmt ? '' : room ? 'When a System chat channel opens in the story' : 'When the story reaches a striking moment its readers would react to'));
   return out;
 }
 /* the totals the prompt needs: only when something is tracked */
@@ -1618,7 +1622,7 @@ var WHEN = {
   guild: 'When {{user}} joins a guild, or its grade or {{user}}\'s standing changes notably',
   party: 'When a party forms or changes, or members\' condition shifts sharply in a fight',
   ranking: 'When a ranking is announced or {{user}}\'s place changes notably',
-  chat: 'When a group chat, guild chat or online reactions (comments, posts) appear in the story',
+  chat: 'When a System chat channel opens in the story, or when the story reaches a striking moment its readers would react to',
   snap: 'Only when the story calls for this window',
   track: 'Whenever one of these values changes'
 };
@@ -1913,7 +1917,7 @@ var KEY_NOTE = {
   guild: 'grade 길드 등급 · name 길드 이름 · contrib 기여도 "cur/max" · member 길드원(여러 줄, "이름|역할|등급")',
   party: 'me 사용자 이름 · member 파티원(여러 줄, "이름|클래스 · 역할|HP cur/max|MP cur/max|상태")',
   ranking: 'title 랭킹 이름 · me 사용자 이름 · row 순위(여러 줄, "순위|이름|등급|변동")',
-  chat: 'title 방 이름 · me 사용자 이름 · sys 시스템 줄 · msg 메시지(여러 줄, 쓴 순서대로, "이름|등급|시간 또는 ▲추천|내용") · best 베스트 댓글(msg와 같은 형식)'
+  chat: '시스템 채널(길드 채널 등) 또는 작품 밖 독자 댓글. title 채널 이름 또는 회차 · me 사용자 이름 · sys 시스템 줄 · msg 메시지(여러 줄, 쓴 순서대로, "이름|등급|시간 또는 ▲추천|내용") · best 베스트 댓글(msg와 같은 형식)'
 };
 function aiGuide(t) {
   var ef = effective(merge(DEF, CF || {}), t), L = [];
@@ -1958,7 +1962,7 @@ function aiGuide(t) {
     'status만: `grow` ("lv" 레벨 또는 "rank" 랭크) · `stats` 능력치 이름(쉼표 구분) · `fields` 기본 항목 켜기/끄기 `{"date":1,"time":1,…}`',
     'profile만: `stats` 공통 능력치(쉼표 구분) · `uniq` 고유 능력치 · `aff` 호감도 · `mind` 속마음 (각각 1/0)',
     'system만: `types` 쓸 종류 `{"notice":1,"talk":1,"warn":1,"error":1,"levelup":1}` (0이면 그 종류는 쓰지 않는다)',
-    'gate만: `types` `{"gate":1,"boss":1}` 게이트 발생 · 보스 등장 / chat만: `types` `{"room":1,"comment":1}` 채팅방 · 댓글 반응', '',
+    'gate만: `types` `{"gate":1,"boss":1}` 게이트 발생 · 보스 등장 / chat만: `types` `{"room":1,"comment":1}` 시스템 채널 · 독자 반응(작품 밖 독자 댓글)', '',
     '기본 창의 키 (AI가 채팅에 쓰는 값):');
   WIN_KINDS.forEach(function (k) { L.push('- **' + k + '** (' + WIN_NAME[k] + '): ' + KEY_NOTE[k]); });
   L.push('', '### cw: 새 창', '',
@@ -2688,7 +2692,7 @@ function sysOpts(e) {
     }).join('') + '</div></div>';
 }
 /* gate / chat: which kinds the AI may use, and a preview of each kind in use */
-var SUB_NAME = { gate: { gate: '게이트 발생', boss: '보스 등장' }, chat: { room: '채팅방', comment: '댓글 반응' } };
+var SUB_NAME = { gate: { gate: '게이트 발생', boss: '보스 등장' }, chat: { room: '시스템 채널', comment: '독자 반응' } };
 function subPrev(e, k) { var on = subTypes(e, k), cur = (ui.subPrev || {})[k]; return on.indexOf(cur) > -1 ? cur : on[0]; }
 function subOpts(e, k) {
   var on = subTypes(e, k), cur = subPrev(e, k);
@@ -2727,7 +2731,7 @@ function windowsSection() {
       winCard('guild', '길드', '길드 등급 · 기여도 · 길드원') +
       winCard('party', '파티', '파티원 HP · MP · 상태') +
       winCard('ranking', '랭킹', '상위권과 내 순위') +
-      winCard('chat', '채팅', '길드챗 · 단톡 · 댓글 반응', subOpts(e, 'chat')) + '</div>' +
+      winCard('chat', '채팅', '길드 채널 · 작품 밖 독자 댓글', subOpts(e, 'chat')) + '</div>' +
     (pk ? '<div class="hbs-sec"><h3>새 창<small>이 팩에만 있는 창</small></h3>' + pk.cw.map(cwCard).join('') +
       '<div class="hbs-newcw"><input class="hbs-in" id="pk-tag" placeholder="태그 (영문, 예: awaken)"><input class="hbs-in" id="pk-name" placeholder="이름 (예: 각성 창)">' +
       '<button type="button" class="hbs-btn pri" data-act="pk-cwadd">+ 새 창 만들기</button></div></div>' : '');
