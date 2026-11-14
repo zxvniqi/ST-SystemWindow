@@ -94,7 +94,8 @@ function trimS(s) { return String(s).trim(); }
 HB.parse = function (raw) {
   var d = { _l: [] };
   String(raw || '').split(/\r?\n/).forEach(function (l) {
-    var m = l.match(/^\s*[-*]?\s*([A-Za-z_]+)\s*[:：]\s*([\s\S]*)/);
+    /* a key may carry digits after its first letter (a pack's own field, "stat2") */
+    var m = l.match(/^\s*[-*]?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:：]\s*([\s\S]*)/);
     if (!m) return;
     var k = m[1].toLowerCase(), v = m[2].trim();
     if (!v) return;
@@ -929,7 +930,7 @@ HB.R.license = function (d) {
 HB.R.guild = function (d) {
   /* a guild is placed by its ranking (place|change); an old block's grade still shows as a chip */
   var H = HB, v = function (k) { return H.hv(d, k); }, c = H.frac(v('contrib')), mem = H.lines(d, 'member'), r = H.fields(v('rank')), ch = H.chg(r[1]);
-  var rk = r[0] ? '<span class="gd-rk">' + H.esc(r[0]) + (ch ? '<em class="' + (/^[▼↓]/.test(ch) ? 'dn' : /^[▲↑+]/.test(ch) ? 'up' : '') + '">' + H.esc(ch) + '</em>' : '') + '</span>' : '';
+  var rk = r[0] ? '<span class="gd-rk">' + H.esc(r[0]) + (ch ? '<em class="' + (/^[▼↓-]/.test(ch) ? 'dn' : 'up') + '">' + H.esc(ch) + '</em>' : '') + '</span>' : '';
   return '<div class="win">' + H.hd('medal', T('guild'), 'Guild', !r[0] && v('grade') ? H.gtag(v('grade')) : '') + '<div class="bd">' +
     (v('name') || rk ? '<div class="gd-name"><b>' + H.esc(v('name')) + '</b>' + rk + '</div>' : '') +
     (c ? '<div class="gd-c"><div class="row"><span>' + T('contrib') + '</span><span><b>' + H.esc(c.a) + '</b> / ' + H.esc(c.b) + '</span></div>' + H.bar(c.p) + '</div>'
@@ -1051,7 +1052,7 @@ var DEF = {
   shop: { on: false },
   gate: { on: false, types: { gate: 1, boss: 1 } }, clear: { on: false }, awaken: { on: false }, license: { on: false }, guild: { on: false }, party: { on: false }, ranking: { on: false },
   chat: { on: false, types: { room: 1, comment: 1 } },
-  adv: { depth: 1, role: 0, cleanup: 1, strip: 1, checkProfile: '' }
+  adv: { depth: 1, role: 0, cleanup: 1, strip: 1, stripWin: 1, checkProfile: '' }
 };
 var ctx = null, S = null, CF = null, LINK = { src: 'none', ck: null };
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
@@ -1243,7 +1244,8 @@ function statusPrompt(c, W, st) {
     (missing.length ? '\nNot tracked yet, write in full this time: ' + missing.map(function (k) { return FULL[k]; }).join(' / ') : '') +
     '\n[Current Status]' + (f.skill || f.title ? ' (skill/title effects omitted)' : '') + '\n' + HB.S.text(st, keys, true);
 }
-function buildPrompt(c, st) {
+/* mem = { quests, people } to remind the AI of, when old windows are no longer sent */
+function buildPrompt(c, st, mem) {
   var W = WORDS[c.lang] || WORDS.auto, out = [], f = c.status.fields;
   var any = KINDS.some(function (k) { return c[k].on; }) || customWins(c).length;
   if (!any) return '';
@@ -1275,7 +1277,8 @@ function buildPrompt(c, st) {
     out.push(sm);
   }
   if (c.quest.on) out.push('[Quest Window]\n' + whenOf(c, 'quest') + ':\n<quest>\ntype: ' + W.qtype + '\ntitle: quest name\ndesc: situation, 1-2 sentences\ntime: HH:MM:SS left|% of time left\n' +
-    'goal: objective cur/max; ...\nreward: ...; ...\npenalty: ...; ...' + extraLines(c, 'quest') + '\n</quest>\nGoals are not yet done at issue: each starts at 0. Progress: repeat the block with "state: active". End: <quest> with state: clear or fail, grade, title, and only the reward or penalty actually applied.');
+    'goal: objective cur/max; ...\nreward: ...; ...\npenalty: ...; ...' + extraLines(c, 'quest') + '\n</quest>\nGoals are not yet done at issue: each starts at 0. Progress: a <quest> with only title, "state: active" and the lines that changed (goal, time). End: a <quest> with only title, state: clear or fail, grade, and the reward or penalty actually applied.' +
+    (mem && mem.quests.length ? '\nOpen quests (end each with state: clear or fail):\n- ' + mem.quests.join('\n- ') : ''));
   if (c.profile.on) {
     var ps = names(c.profile.stats).map(function (n) { return n + ' G'; });
     if (c.profile.uniq) ps.push('*unique G');
@@ -1284,7 +1287,8 @@ function buildPrompt(c, st) {
       'info: age · job · affiliation\ntag: trait; trait (prefix ! for a warning sign)' + (ps.length ? '\nstat: ' + ps.join('; ') : '') +
       (c.profile.aff ? '\naff: affection 0-100|their feeling toward {{user}} in one word' : '') + (c.profile.mind ? '\nmind: their current inner thought, one sentence' : '') + extraLines(c, 'profile') + '\n</profile>\n' +
       (c.profile.uniq ? '1-2 stats unique to the person get a * prefix. ' : '') + 'Write ? for what {{user}} cannot know yet' +
-      (c.profile.mind ? '; if mind is ?, add "lock: what would reveal it".' : '.');
+      (c.profile.mind ? '; if mind is ?, add "lock: what would reveal it".' : '.') +
+      (mem && mem.people.length ? '\nAlready shown: ' + mem.people.join('; ') + '.' : '');
     out.push(p);
   }
   if (c.shop.on) out.push('[Shop Window]\n' + whenOf(c, 'shop') + ':\n<shop>\npoint: balance\nitem: name|rarity|price|effect|stock or unlock condition\nrefresh: time until restock' + extraLines(c, 'shop') + '\n</shop>\n3-6 item lines. Prefix ! to a locked item\'s name. Rarity: ' + W.rar + '.');
@@ -1310,7 +1314,6 @@ function hunterSections(c, W) {
   sec('party', 'Party Window', 'me: {{user}}\nmember: name|class · role|hp cur/max|mp cur/max|status effect or none, one line per member');
   sec('ranking', 'Ranking Window', 'title: ranking name\nme: {{user}}\nrow: place|name|grade|change (▲n, ▼n or -), one per line',
     'Rows: the top 3, then the rows around {{user}}.');
-  var ct = subTypes(c, 'chat'), room = ct.indexOf('room') > -1, cmt = ct.indexOf('comment') > -1;
   /* room = a chat channel the System itself shows; comment = readers outside the story, reading it as a web novel */
   var ct = subTypes(c, 'chat'), room = ct.indexOf('room') > -1, cmt = ct.indexOf('comment') > -1;
   sec('chat', 'Chat Window', 'title: ' + (room && cmt ? 'channel name, or the chapter the readers are commenting on' : room ? 'channel name' : 'the chapter the readers are commenting on') +
@@ -1328,16 +1331,20 @@ function promptState(c, type) { return c.status.on || TRACK.tags.length ? curren
 /* type = SillyTavern's generation type when called for a generation (swipe / regenerate / continue / normal) */
 function applyPrompt(type) {
   resolve();
-  var text = LINK.active ? buildPrompt(EF, promptState(EF, typeof type === 'string' ? type : '')) : '';
+  type = typeof type === 'string' ? type : '';
+  /* an impersonation or a background request (summary, image prompt) is not a reply of the story: no window rules for it */
+  var text = LINK.active && !/^(impersonate|quiet)$/.test(type) ? buildPrompt(EF, promptState(EF, type), EF.adv.stripWin ? promptMem(type) : null) : '';
   try { if (text && ctx.substituteParams) text = ctx.substituteParams(text); } catch (e) {}
   try { ctx.setExtensionPrompt(PROMPT_ID, text, 1, Math.max(0, CF.adv.depth | 0), false, CF.adv.role | 0); }
   catch (e) { console.warn('[HB] 지침 주입 실패', e); }
 }
 
 /* ---------- regex: installed and kept in sync automatically ---------- */
+var KEEP_DEPTH = 4;   /* messages, counted from the newest: the last two replies keep their windows */
 function wantedRegex() {
   /* custom windows of every installed pack are drawn too; with none the regex stays exactly as before */
   var TAGS = KINDS.concat(allTags()).join('|'), strip = TRACK.tags.length ? '<(status|' + TRACK.tags.join('|') + ')>[\\s\\S]*?<\\/\\1>' : '<status>[\\s\\S]*?<\\/status>';
+  var OLD = KINDS.concat(allTags()).filter(function (k) { return k !== 'status' && k !== 'system'; }).join('|');
   /* a chat switched off keeps its tags untouched (another card may draw them) */
   var base = { trimStrings: [], placement: [2], disabled: !LINK.active, runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
   function mk(o) { var r = clone(base); Object.keys(o).forEach(function (k) { r[k] = o[k]; }); return r; }
@@ -1349,7 +1356,11 @@ function wantedRegex() {
       findRegex: '/<(' + TAGS + ')>(?![\\s\\S]*<\\/\\1>)([\\s\\S]*)$/i', replaceString: '\n```\n[HB:pending]\n$1\n$2\n```\n' }),
     /* the AI is handed the totals under [Current Status], so earlier status blocks are left out of what it reads */
     mk({ id: 'hb-sw-prompt', scriptName: '시스템 상태창 · 지난 상태창을 AI에게 보내지 않음 (자동 관리)', markdownOnly: false, promptOnly: true, minDepth: 1,
-      disabled: !(LINK.active && CF.adv.strip && (EF.status.on || TRACK.tags.length)), findRegex: '/' + strip + '\\s*/gi', replaceString: '' })
+      disabled: !(LINK.active && CF.adv.strip && (EF.status.on || TRACK.tags.length)), findRegex: '/' + strip + '\\s*/gi', replaceString: '' }),
+    /* windows older than the last two replies are left out too (the System's own lines stay: they are part of the story);
+       the quests still open and the people already profiled are handed over in the prompt instead */
+    mk({ id: 'hb-sw-prompt-old', scriptName: '시스템 상태창 · 지난 창을 AI에게 보내지 않음 (자동 관리)', markdownOnly: false, promptOnly: true, minDepth: KEEP_DEPTH,
+      disabled: !(LINK.active && CF.adv.stripWin), findRegex: '/<(' + OLD + ')>[\\s\\S]*?<\\/\\1>\\s*/gi', replaceString: '' })
   ];
 }
 /* quiet = never reload the chat (used while a reply is about to be generated) */
@@ -1493,6 +1504,8 @@ function process(pre) {
   var quiet = seen.has(key);
   if (seen.size > 800) seen.clear();
   var mt = pre.closest('.mes_text'), order = 0;
+  /* a quest's progress block holds only what changed: the rest comes from the quest's earlier blocks */
+  if (!pending && mt && kind === 'quest' && /(^|\n)\s*state\s*[:：]/i.test(raw)) { var qf = questFill(parseInt(id, 10), statusPres(mt, pre, 'quest').length, raw); if (qf) raw = qf; }
   /* the status and tracked custom windows are drawn from the totals, not from the few lines the block holds */
   if (!pending && mt && (kind === 'status' || TRACK.tags.indexOf(kind) > -1)) {
     order = statusPres(mt, pre, kind).length;
@@ -2146,6 +2159,72 @@ function saveCorrection(lines) {
   syncStates();
   return true;
 }
+/* ---------- quests: every <quest> block the chat has shown, merged per title ----------
+   An update block (one with "state:") carries only what changed; the rest comes from the blocks before it.
+   Nothing is stored: the chat is read each time, so swipes, edits and deletions are always reflected. */
+function questKey(s) { return String(s || '').toLowerCase().replace(/[\s\[\]「」『』【】<>《》"'.,!?~\-]/g, ''); }
+function questBlocks(text) {
+  var out = [], re = /<quest>([\s\S]*?)<\/quest>/gi, m;
+  if (!text || !/<quest>/i.test(text)) return out;
+  while ((m = re.exec(text))) out.push(m[1]);
+  return out;
+}
+function questState(s) {
+  s = String(s || '').toLowerCase();
+  return /clear|완료|성공|success|done|クリア|成功/.test(s) ? 'clear' : /fail|실패|失敗/.test(s) ? 'fail' : /active|진행|ongoing|進行/.test(s) ? 'active' : '';
+}
+/* end = last message to read, endBlock = last quest block of that message to read; shown = values from the translated text.
+   Returns { log: { key: quest }, last: the quest of the last block read } */
+function questLog(end, endBlock, shown) {
+  var chat = C().chat || [], log = {}, seq = 0, last = null;
+  end = end == null ? chat.length - 1 : Math.min(end, chat.length - 1);
+  for (var i = 0; i <= end; i++) {
+    var m = chat[i], text = m.mes || '';
+    if (isUserMes(m)) {                                    /* "(I decline the quest [name])": that quest is closed */
+      if (text.indexOf('[') > -1 && /거절|declin|断/.test(text)) Object.keys(log).forEach(function (k) { if (!log[k].state && text.indexOf('[' + log[k].title + ']') > -1) log[k].state = 'declined'; });
+      continue;
+    }
+    var a = questBlocks(text), b = shown && a.length && m.extra && m.extra.display_text ? questBlocks(m.extra.display_text) : a;
+    if (b.length !== a.length) b = a;
+    for (var n = 0; n < a.length; n++) {
+      if (i === end && endBlock != null && n > endBlock) break;
+      var orig = HB.parse(a[n]), d = b === a ? orig : HB.parse(b[n]), key = questKey(HB.one(orig, 'title'));
+      last = null;
+      if (!key) continue;
+      var q = log[key];
+      /* a block without a state issues the quest (again): it stands on its own */
+      if (!q || !HB.one(orig, 'state')) q = log[key] = { title: HB.one(orig, 'title'), d: {}, keys: [] };
+      d._l.forEach(function (kv) { if (q.keys.indexOf(kv[0]) < 0) q.keys.push(kv[0]); q.d[kv[0]] = d[kv[0]]; });
+      q.state = questState(HB.one(orig, 'state')); q.n = seq++;
+      last = q;
+    }
+  }
+  return { log: log, last: last };
+}
+/* the whole quest as block text for the k-th quest block of message i, when that block is a progress update */
+function questFill(i, k, raw) {
+  if (questState(HB.one(HB.parse(raw), 'state')) !== 'active') return null;
+  var q = questLog(i, k, true).last;
+  return q ? q.keys.map(function (key) { return q.d[key].map(function (v) { return key + ': ' + v; }).join('\n'); }).join('\n') : null;
+}
+/* a swipe or regenerate redoes the last reply, so what the AI is told must not count it */
+function redoEnd(type) {
+  var chat = C().chat || [], n = chat.length;
+  return n && /^(swipe|regenerate)$/.test(type || '') && !isUserMes(chat[n - 1]) ? n - 2 : n - 1;
+}
+/* what the AI is told once old windows are no longer sent: the quests still open and the people already profiled */
+function promptMem(type) {
+  var end = redoEnd(type), log = questLog(end).log;
+  var quests = Object.keys(log).map(function (k) { return log[k]; }).filter(function (q) { return q.state === '' || q.state === 'active'; })
+    .sort(function (a, b) { return a.n - b.n; }).slice(-5).map(function (q) { var g = (q.d.goal || []).join('; '); return q.title + (g ? ': ' + g : ''); });
+  var people = bookData(end).people.slice(0, 12).map(function (p) {
+    var rank = HB.one(p.d, 'rank'), aff = trimS(HB.fields(HB.one(p.d, 'aff'))[0] || ''), x = [];
+    if (rank && !HB.isQ(rank)) x.push(rank);
+    if (/^\d+$/.test(aff)) x.push('aff ' + aff);
+    return trimS(HB.one(p.d, 'name')) + (x.length ? ' (' + x.join(', ') + ')' : '');
+  });
+  return { quests: quests, people: people };
+}
 /* ---------- translated display ----------
    A translation extension keeps the translated message in extra.display_text. The totals are computed from the
    original text, so the windows would show untranslated values. A translated block lines up with its original line
@@ -2234,7 +2313,7 @@ function auditProfiles() {
 function auditPrompt(st, keys) {
   var c = C(), chat = c.chat || [], parts = [], used = 0;
   for (var i = chat.length - 1; i >= 0 && used < AUDIT_MSGS; i--) {
-    var m = chat[i], t = String(m.mes || '').replace(new RegExp('<(' + KINDS.filter(function (k) { return k !== 'status'; }).join('|') + ')>[\\s\\S]*?<\\/\\1>', 'gi'), '').trim();
+    var m = chat[i], t = String(m.mes || '').replace(new RegExp('<(' + KINDS.concat(allTags()).filter(function (k) { return k !== 'status'; }).join('|') + ')>[\\s\\S]*?<\\/\\1>', 'gi'), '').trim();
     if (!t) continue;
     if (t.length > AUDIT_CHARS) t = '…' + t.slice(-AUDIT_CHARS);
     parts.unshift((isUserMes(m) ? '[{{user}}]\n' : '[Story]\n') + t);
@@ -2266,7 +2345,7 @@ function auditAsk(sys, user) {
 function auditParse(reply, st, keys) {
   var out = [], seen = {};
   String(reply || '').replace(/```[a-z]*|```/gi, '').split(/\r?\n/).forEach(function (l) {
-    var m = l.match(/^\s*[-*]?\s*([A-Za-z_]+)\s*[:：]\s*(.+?)\s*(?:\/\/\s*(.*))?$/);
+    var m = l.match(/^\s*[-*]?\s*([A-Za-z_][A-Za-z0-9_]*)\s*[:：]\s*(.+?)\s*(?:\/\/\s*(.*))?$/);
     if (!m) return;
     var k = m[1].toLowerCase(), v = trimS(m[2]);
     if (seen[k] || (keys.indexOf(k) < 0 && !(k in st))) return;
@@ -2803,11 +2882,12 @@ var PANELS = {
       acc('guide', '만드는 법', 'AI에게 맡기기 · zip 구성', GUIDE) + '</div>';
   },
   advanced: function (c) {
-    var text = buildPrompt(EF, promptState(EF));
+    var text = buildPrompt(EF, promptState(EF), EF.adv.stripWin ? promptMem() : null);
     return '<div class="hbs-sec"><h3>지침 넣는 위치</h3><div class="hbs-line" style="align-items:flex-start;gap:16px"><div class="hbs-f"><label for="hbs-depth">깊이 (0 = 맨 끝)</label><input id="hbs-depth" type="number" min="0" max="20" class="hbs-in hbs-num" data-k="adv.depth" value="' + (c.adv.depth | 0) + '"></div>' +
       '<div class="hbs-f"><span class="l">역할</span><div class="hbs-chips">' + chip('adv.role', 0, 'System') + chip('adv.role', 1, 'User') + chip('adv.role', 2, 'Assistant') + '</div></div></div></div>' +
       '<div class="hbs-sec"><div class="hbs-card">' + row('adv.cleanup', '지난 응답의 창 접어 두기', '최근 3개 응답보다 오래된 창은 그리지 않고 코드로 접어 둡니다. 긴 채팅이 가벼워지고, AI에게는 그대로 보냅니다.') + '</div>' +
-      '<div class="hbs-card">' + row('adv.strip', '지난 상태창을 AI에게 보내지 않기', '현재 상태를 따로 알려 주므로 지난 상태창은 AI가 읽는 내용에서 뺍니다. 토큰이 줄어듭니다.') + '</div></div>' +
+      '<div class="hbs-card">' + row('adv.strip', '지난 상태창을 AI에게 보내지 않기', '현재 상태를 따로 알려 주므로 지난 상태창은 AI가 읽는 내용에서 뺍니다. 토큰이 줄어듭니다.') + '</div>' +
+      '<div class="hbs-card">' + row('adv.stripWin', '지난 창을 AI에게 보내지 않기', '최근 2개 응답보다 오래된 창은 AI가 읽는 내용에서 뺍니다. 시스템 메시지는 남기고, 진행 중인 퀘스트와 만난 인물은 따로 알려 줍니다.') + '</div></div>' +
       '<div class="hbs-sec"><h3>수첩</h3><div class="hbs-card">' + row('@book', '수첩 쓰기', '채팅에 나온 인물 창과 마지막 상점을 모아 봅니다. 모든 채팅에 똑같이 적용됩니다.') + '</div>' +
       (S.ui.book ? '<div class="hbs-f"><span class="l">버튼 위치</span><div class="hbs-chips">' + chip('@bookAt', 'wand', '마법봉 메뉴') + chip('@bookAt', 'input', '입력창 아이콘') + chip('@bookAt', 'float', '떠 있는 버튼') + '</div></div>' : '') + '</div>' +
       (EF.pack ? '<div class="hbs-sec"><h3>커스텀 팩 CSS · JS<small>모든 창에 함께 적용</small></h3>' +
@@ -3261,9 +3341,10 @@ function bookNoti(people, raw, at) {
     R.put(); S.put();
   });
 }
-function bookData() {
-  var chat = C().chat || [], people = {}, shop = null;
-  for (var i = 0; i < chat.length; i++) {
+/* end = last message to read (default: the whole chat) */
+function bookData(end) {
+  var chat = C().chat || [], people = {}, shop = null, stop = end == null ? chat.length : Math.min(chat.length, end + 1);
+  for (var i = 0; i < stop; i++) {
     var m = chat[i];
     if (isUserMes(m) || !m.mes || m.mes.indexOf('<') < 0) continue;
     var a = bookBlocks(m.mes), b = m.extra && m.extra.display_text ? bookBlocks(m.extra.display_text) : [];
@@ -3494,7 +3575,7 @@ function start() {
   ['MESSAGE_RECEIVED', 'MESSAGE_SENT', 'MESSAGE_DELETED', 'CHARACTER_MESSAGE_RENDERED', 'USER_MESSAGE_RENDERED', 'MORE_MESSAGES_LOADED', 'CHAT_CHANGED'].forEach(function (ev) { on(ev, hideOld); });
   addWand(); wandTimer = setInterval(addWand, 3000);
 
-  P.__HB_SYSTEM_WINDOW__ = handle = { ext: IS_EXT, destroy: destroy, open: openSettings, version: VERSION, buildPrompt: function () { resolve(); return buildPrompt(EF, promptState(EF)); },
+  P.__HB_SYSTEM_WINDOW__ = handle = { ext: IS_EXT, destroy: destroy, open: openSettings, version: VERSION, buildPrompt: function () { resolve(); return buildPrompt(EF, promptState(EF), EF.adv.stripWin ? promptMem() : null); },
     S: HB.S, state: function () { return currentState(); } };
   window.addEventListener('pagehide', destroy);
   console.log('[시스템 상태창] v' + VERSION + ' 시작');
