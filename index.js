@@ -1338,7 +1338,8 @@ function applyPrompt(type) {
 function wantedRegex() {
   /* custom windows of every installed pack are drawn too; with none the regex stays exactly as before */
   var TAGS = KINDS.concat(allTags()).join('|'), strip = TRACK.tags.length ? '<(status|' + TRACK.tags.join('|') + ')>[\\s\\S]*?<\\/\\1>' : '<status>[\\s\\S]*?<\\/status>';
-  var base = { trimStrings: [], placement: [2], disabled: false, runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
+  /* a chat switched off keeps its tags untouched (another card may draw them) */
+  var base = { trimStrings: [], placement: [2], disabled: !LINK.active, runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
   function mk(o) { var r = clone(base); Object.keys(o).forEach(function (k) { r[k] = o[k]; }); return r; }
   /* old windows are folded by hideOld() now, so no regex throws their content away */
   return [
